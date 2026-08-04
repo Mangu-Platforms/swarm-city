@@ -1,5 +1,95 @@
 # Changelog
 
+## Unreleased
+
+Audit and remediation pass over the v3 package. Every item below was reproduced
+before it was fixed and has a regression test unless noted.
+
+### Security
+
+- Repository files were read as a byte-bounded prefix *before* redaction, so a
+  private key larger than the read bound lost its END marker, matched nothing,
+  and reached model prompts (and, with remote synthesis on, a third-party API)
+  as raw key material.
+- The quoted-secret pattern could not match JSON, and used `\b` around keywords
+  that never matches inside `API_TOKEN`. Added JSON, indented YAML, URL
+  userinfo, HTTP Basic, and Slack/Stripe/Google/GitLab/npm/SendGrid formats.
+- `REQUIRE_API_TOKEN` defaulted to false, so the API was unauthenticated
+  anywhere Compose or the k3s manifest did not set it. Now true by default.
+- `PROTECT_METRICS=true` with no token started cleanly and served `/metrics` to
+  everyone. Now refused at startup.
+- Grafana shipped with an empty admin password, which Grafana resolves to the
+  built-in `admin`/`admin`.
+- The CLI followed HTTP redirects, replaying its bearer token at whatever host
+  the `Location` header named.
+- The CLI printed untrusted model output to the terminal verbatim, allowing
+  escape sequences to clear the screen, rewrite the title, or render deceptive
+  hyperlinks.
+- The `.git` and ignored-directory guards were case-sensitive, so `.GIT/config`
+  reached the real git config on a case-insensitive filesystem.
+- The unauthenticated `/readyz` body disclosed internal endpoint URLs, the exact
+  model roster, and raw exception text.
+- Prometheus exposed `--web.enable-lifecycle` to the Compose network.
+- The k3s Ollama pod ran as root.
+
+### Fixed
+
+- Patches consisting only of new files were rejected with a misleading error,
+  and new files in mixed patches bypassed path reconciliation entirely, because
+  reconciliation ran `git diff` before staging. Staging now happens immediately
+  after apply, which also stops artifacts written by the test run from being
+  swept into the commit by a later `git add -A`.
+- One DeepSeek reservation covered the whole retry sequence while every attempt
+  was separately billed, and the failure path erased tokens the provider had
+  already charged. Budget is now reserved and settled per attempt.
+- Ledger reads failed open, so a truncated file zeroed the month and persisted
+  the reset; a non-numeric `created_at` wedged the ledger permanently.
+- Task state loading raised on any unparseable file in the data volume, putting
+  the container into a permanent crash loop.
+- `TASK_RETENTION` bounded memory but not the on-disk store.
+- An idempotency key whose task failed or was interrupted replayed the failure,
+  so automated retries silently no-opped.
+- `TaskRequest` stripped whitespace from inline context file *contents*,
+  destroying indentation so generated diffs failed `git apply --check`.
+- Two roster entries resolving to the same model crashed startup, which is what
+  happens when one model backs both draft roles on a low-memory host.
+- Review gates the configured roster could never satisfy were accepted, blocking
+  every task after spending its full model budget.
+- `CriticReview` rejected reviews with more than 12 findings, discarding the
+  reviewer that found the most.
+- `extract_json` raised `RecursionError` past the retry handler, aborting a task
+  on one bad model response.
+- `extract_diff` left stray or unterminated code fences in the diff body.
+- `install.sh` aborted on an unbound `${USER}` immediately after installing
+  Docker, and raced Ollama's startup before pulling models.
+- `/healthz` returned 200 unconditionally, so container and Kubernetes probes
+  could never restart a non-functional orchestrator.
+- 31 settings could not reach the container: Compose enumerated env vars with no
+  `env_file`, so hardening them in `.env` was silently ignored.
+- The release archive was not reproducible; `make verify` reported success while
+  silently skipping lint, format, and Compose validation; and the Kubernetes
+  gate was a whole-file substring test that passed on an inverted manifest.
+- `pull_models.sh` and `package_release.sh` used bash-4 and GNU-only constructs
+  that fail on macOS, which the README lists as supported.
+- Reviewers were shown a Python dict repr labelled as a JSON Schema.
+- The untrusted-data notice omitted two blocks the prompts actually emit.
+- Persisted task state was briefly world-readable and its rename was not
+  durable; lock contention was reported as a task timeout; `file_lock` spent its
+  timeout twice; and the blocking budget lock ran on the event loop.
+
+### Added
+
+- Apache-2.0 licence, contributing guide, security policy, issue and pull
+  request templates, and Dependabot configuration.
+- ShellCheck in the release gate and CI.
+- 30 regression tests (57 to 87 total).
+
+### Removed
+
+- The committed `RELEASE-MANIFEST.sha256`, a build artifact nothing verified.
+- `final_review_user_prompt`, dead code whose global string replace rewrote
+  untrusted repository content.
+
 ## 3.0.0 — Production-minded swarm hardening
 
 ### Added

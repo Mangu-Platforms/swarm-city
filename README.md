@@ -65,7 +65,8 @@ successful branch is preserved only after the transaction completes.
 
 ## Security and reliability defaults
 
-- API authentication is required in Docker Compose.
+- API authentication is required by default; the orchestrator refuses to start
+  without a token.
 - Services publish only on `127.0.0.1`.
 - The target repository is mounted read-only by default.
 - Git application and PR creation are disabled by default.
@@ -83,7 +84,7 @@ successful branch is preserved only after the transaction completes.
   credential prompts, and unsafe protocols are neutralized.
 
 See [`docs/SECURITY.md`](docs/SECURITY.md) for the threat model and residual
-risks.
+risks, and [`SECURITY.md`](SECURITY.md) for how to report a vulnerability.
 
 ## Requirements
 
@@ -122,7 +123,13 @@ Create a configuration and choose the target repository before starting:
 cp .env.example .env
 chmod 600 .env
 # Edit TARGET_REPO and choose AGENTS_PROFILE=light|balanced|quality.
+# Set SWARM_API_TOKEN and GRAFANA_PASSWORD: the orchestrator refuses to start
+# without a token, and Compose refuses to start Grafana without a password.
 ```
+
+Every setting in `orchestrator/app/config.py` can be set in `.env`; Compose
+passes the whole file to the orchestrator. Container-internal paths and service
+names are set by Compose and are not overridable from `.env`.
 
 On Ubuntu, the installer creates `.env` with random API and Grafana credentials
 when no `.env` exists, validates the Compose configuration and license manifest,
@@ -266,8 +273,8 @@ Primary endpoints:
 | `DELETE /tasks/{id}` | required | Cancel queued or running work |
 | `POST /context/preview` | required | Inspect selected context without model calls |
 | `GET /model-list` | required | Inspect logical agents and exact model availability |
-| `GET /healthz` | public probe | Process liveness only |
-| `GET /readyz` | public probe | Exact-roster readiness |
+| `GET /healthz` | public probe | Process liveness; 503 when the control plane is absent |
+| `GET /readyz` | public probe | Exact-roster readiness; counts only, no endpoint detail |
 | `GET /version` | public probe | API and pipeline schema version |
 | `GET /metrics` | configurable | Prometheus metrics |
 
@@ -406,12 +413,16 @@ Run the complete local release gate:
 make verify
 ```
 
-That gate checks Python compilation, all unit/integration tests, model-license
-parity, static deployment invariants, shell syntax, Git whitespace, Ruff when
-installed, and Docker Compose when available.
+That gate checks Python compilation, all unit and integration tests,
+model-license parity, static deployment invariants, shell syntax and
+ShellCheck, Git whitespace, Ruff lint and format, and Docker Compose
+validation. Missing tooling fails the gate rather than being skipped silently;
+set `ALLOW_MISSING_TOOLS=1` to skip deliberately, and the summary then names
+what was not run.
 
-Build a deterministic source archive with an internal file manifest and an
-external SHA-256 checksum:
+Build a reproducible source archive with an internal per-file manifest and an
+external SHA-256 checksum. Timestamps are normalized, so two clones of the same
+commit produce byte-identical archives:
 
 ```bash
 make package
@@ -454,7 +465,15 @@ remote synthesis, GitHub operations, or apply mode.
 | `provisioning/` | Model inventory, licenses, release validation, verification, packaging |
 | `monitoring/` | Prometheus and provisioned Grafana assets |
 | `k3s/swarm.yaml` | Hardened Kubernetes reference |
+| `ci/` | CI workflow template to copy into repositories the swarm opens PRs against |
 | `REVAMP_REPORT.md` | Original-package comparison and completed remediation |
+
+## Contributing
+
+Development setup, the change checklist, and the rules that govern the git
+transaction and release gates are in [`CONTRIBUTING.md`](CONTRIBUTING.md). The
+short version: `make verify` must pass, every behavioral change needs a test,
+and no change may weaken a gate without saying so explicitly.
 
 ## Remaining operator responsibilities
 

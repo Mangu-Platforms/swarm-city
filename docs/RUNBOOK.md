@@ -101,7 +101,10 @@ python3 tools/swarm.py models
 
 Expected behavior:
 
-- `/healthz` returns `ok: true` after the control plane initializes;
+- `/healthz` returns 200 with `ok: true` after the control plane initializes,
+  and 503 while it is absent, so container and Kubernetes probes can act on it;
+- `/readyz` is unauthenticated and reports counts only. Use the authenticated
+  `/model-list` route to see which endpoint or model is missing;
 - `/readyz` returns `ready: true` only when every exact model required by the
   active roster is available, unless readiness is intentionally relaxed;
 - `/model-list` reports no missing tags;
