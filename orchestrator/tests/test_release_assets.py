@@ -87,3 +87,31 @@ def test_release_archive_normalizes_timestamps() -> None:
     script = (ROOT / "provisioning" / "package_release.sh").read_text(encoding="utf-8")
     assert "touch -h" in script
     assert "SOURCE_DATE_EPOCH" in script
+
+
+def test_ruff_version_matches_between_pre_commit_and_requirements() -> None:
+    """A skew here makes pre-commit and CI disagree about formatting.
+
+    Dependabot updates requirements-dev.txt but not the pre-commit rev, so
+    without this check a routine dependency bump silently leaves developers
+    formatting with one ruff and CI enforcing another.
+    """
+
+    requirements = (ROOT / "orchestrator" / "requirements-dev.txt").read_text(
+        encoding="utf-8"
+    )
+    pinned = next(
+        line.split("==", 1)[1].strip()
+        for line in requirements.splitlines()
+        if line.startswith("ruff==")
+    )
+
+    config = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text("utf-8"))
+    hook_rev = next(
+        repo["rev"] for repo in config["repos"] if "ruff-pre-commit" in repo["repo"]
+    )
+
+    assert hook_rev.lstrip("v") == pinned, (
+        f".pre-commit-config.yaml pins ruff {hook_rev} but "
+        f"requirements-dev.txt pins {pinned}"
+    )
