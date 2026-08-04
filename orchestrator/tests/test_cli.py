@@ -1,4 +1,5 @@
 """Host-side CLI configuration tests."""
+
 from __future__ import annotations
 
 import argparse

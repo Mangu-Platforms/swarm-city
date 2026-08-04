@@ -1,4 +1,5 @@
 """Small cross-process file locking primitives."""
+
 from __future__ import annotations
 
 import os

@@ -1,4 +1,5 @@
 """Validated API requests and model-output schemas."""
+
 from __future__ import annotations
 
 import re
@@ -124,7 +125,9 @@ class TaskRequest(BaseModel):
             return None
         normalized = value.strip().lower()
         if not re.fullmatch(r"[0-9a-f]{7,64}", normalized):
-            raise ValueError("expected_head must be a 7-64 character hexadecimal commit")
+            raise ValueError(
+                "expected_head must be a 7-64 character hexadecimal commit"
+            )
         return normalized
 
     @model_validator(mode="after")
@@ -146,7 +149,10 @@ class TaskRequest(BaseModel):
                 "a constraint exceeds MAX_CONSTRAINT_CHARS "
                 f"({settings.max_constraint_chars})"
             )
-        if len(self.context_files) + len(self.context_paths) > settings.max_context_files:
+        if (
+            len(self.context_files) + len(self.context_paths)
+            > settings.max_context_files
+        ):
             raise ValueError(
                 f"context inputs exceed MAX_CONTEXT_FILES ({settings.max_context_files})"
             )
@@ -187,8 +193,7 @@ class ContextPreviewRequest(BaseModel):
             raise ValueError(f"task exceeds MAX_TASK_CHARS ({settings.max_task_chars})")
         if len(self.context_paths) > settings.max_context_files:
             raise ValueError(
-                "context paths exceed MAX_CONTEXT_FILES "
-                f"({settings.max_context_files})"
+                f"context paths exceed MAX_CONTEXT_FILES ({settings.max_context_files})"
             )
         return self
 

@@ -1,4 +1,5 @@
 """Cross-process-style remote token budget accounting tests."""
+
 from __future__ import annotations
 
 import json
@@ -75,7 +76,9 @@ def test_malformed_reservation_fields_do_not_wedge_the_ledger(tmp_path: Path) ->
             {
                 "2026-08": {
                     "used": 999.0,
-                    "reservations": {"abc": {"tokens": 5, "created_at": "not-a-number"}},
+                    "reservations": {
+                        "abc": {"tokens": 5, "created_at": "not-a-number"}
+                    },
                 }
             }
         ),

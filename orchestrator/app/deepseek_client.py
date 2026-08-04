@@ -1,4 +1,5 @@
 """DeepSeek V4 finalizer with retries and a cross-process token budget."""
+
 from __future__ import annotations
 
 import asyncio
@@ -412,7 +413,9 @@ class DeepSeekClient:
                         if choice.get("finish_reason"):
                             finish_reason = str(choice["finish_reason"])
                         delta = choice.get("delta", {})
-                        content = delta.get("content") if isinstance(delta, dict) else None
+                        content = (
+                            delta.get("content") if isinstance(delta, dict) else None
+                        )
                         if isinstance(content, str):
                             output_chars += len(content)
                             if output_chars > self.settings.max_agent_output_chars:

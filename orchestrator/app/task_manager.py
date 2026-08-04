@@ -1,4 +1,5 @@
 """Bounded, persistent lifecycle management for coding swarm tasks."""
+
 from __future__ import annotations
 
 import asyncio
@@ -136,13 +137,9 @@ class TaskManager:
                     "language": payload.get("language"),
                     "apply": bool(payload.get("apply")),
                     "expected_head": payload.get("expected_head"),
-                    "allow_high_risk_paths": bool(
-                        payload.get("allow_high_risk_paths")
-                    ),
+                    "allow_high_risk_paths": bool(payload.get("allow_high_risk_paths")),
                     "context_paths": payload.get("context_paths", []),
-                    "inline_context_file_count": len(
-                        payload.get("context_files", {})
-                    ),
+                    "inline_context_file_count": len(payload.get("context_files", {})),
                     "auto_context": payload.get("auto_context"),
                 },
             },
@@ -393,7 +390,9 @@ class TaskManager:
             except (OSError, ValueError):
                 unreadable.append(path)
                 continue
-            if not isinstance(raw, dict) or not re_full_task_id(str(raw.get("task_id", ""))):
+            if not isinstance(raw, dict) or not re_full_task_id(
+                str(raw.get("task_id", ""))
+            ):
                 unreadable.append(path)
                 continue
             raw["created_at"] = _as_timestamp(raw.get("created_at"))
@@ -468,7 +467,9 @@ class TaskManager:
 
 
 def re_full_task_id(value: str) -> bool:
-    return len(value) == 16 and all(character in "0123456789abcdef" for character in value)
+    return len(value) == 16 and all(
+        character in "0123456789abcdef" for character in value
+    )
 
 
 def _as_timestamp(value: object) -> float:

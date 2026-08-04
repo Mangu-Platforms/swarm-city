@@ -1,4 +1,5 @@
 """Repository-aware, review-gated multi-agent coding pipeline."""
+
 from __future__ import annotations
 
 import asyncio
@@ -55,9 +56,7 @@ class Pipeline:
             self.settings.repo_root,
             self.settings,
         )
-        self._agent_slots = asyncio.Semaphore(
-            self.settings.max_concurrent_agent_calls
-        )
+        self._agent_slots = asyncio.Semaphore(self.settings.max_concurrent_agent_calls)
 
     async def run(self, task: dict, progress: dict) -> dict:
         """Run one coding task under an unconditional wall-clock deadline."""
@@ -91,8 +90,11 @@ class Pipeline:
                 auto_context=task.get("auto_context"),
             )
         expected_head = _normalize_expected_head(task.get("expected_head"))
-        if expected_head and bundle.git_commit and not bundle.git_commit.lower(
-        ).startswith(expected_head):
+        if (
+            expected_head
+            and bundle.git_commit
+            and not bundle.git_commit.lower().startswith(expected_head)
+        ):
             raise RuntimeError(
                 f"stale repository base: expected {expected_head}, "
                 f"current HEAD is {bundle.git_commit}"
@@ -219,14 +221,10 @@ class Pipeline:
                         final_output,
                         task["task"],
                         expected_head=expected_head or bundle.git_commit,
-                        allow_high_risk_paths=bool(
-                            task.get("allow_high_risk_paths")
-                        ),
+                        allow_high_risk_paths=bool(task.get("allow_high_risk_paths")),
                         task_id=task.get("task_id"),
                     )
-                git_outcome = (
-                    "success" if result["git"].get("applied") else "failure"
-                )
+                git_outcome = "success" if result["git"].get("applied") else "failure"
                 GIT_TRANSACTIONS.labels(outcome=git_outcome).inc()
                 if git_outcome == "failure":
                     result["release_gate"]["status"] = "blocked"
@@ -286,9 +284,7 @@ class Pipeline:
             diff = extract_diff(output)
             validation = self._validate_diff(diff)
             fingerprint_text = diff or output.strip()
-            fingerprint = hashlib.sha256(
-                fingerprint_text.encode("utf-8")
-            ).hexdigest()
+            fingerprint = hashlib.sha256(fingerprint_text.encode("utf-8")).hexdigest()
             if fingerprint in fingerprints:
                 duplicates += 1
                 continue
@@ -310,9 +306,7 @@ class Pipeline:
         result["drafts"] = {
             "requested": len(selected),
             "completed": len(drafts),
-            "valid_patches": sum(
-                draft["patch_validation"].valid for draft in drafts
-            ),
+            "valid_patches": sum(draft["patch_validation"].valid for draft in drafts),
             "duplicates_removed": duplicates,
             "failed_calls": failures,
             "candidates": [
@@ -734,9 +728,7 @@ class Pipeline:
                 {
                     "role": "system",
                     "content": reviewer.system_prompt
-                    or (
-                        prompts.SECURITY_SYSTEM if security else prompts.CRITIC_SYSTEM
-                    ),
+                    or (prompts.SECURITY_SYSTEM if security else prompts.CRITIC_SYSTEM),
                 },
                 {
                     "role": "user",
@@ -764,8 +756,8 @@ class Pipeline:
         *,
         phase_suffix: str,
     ) -> tuple[str, str]:
-        should_use_remote = (
-            not self.settings.skip_finalize and bool(self.settings.deepseek_api_key)
+        should_use_remote = not self.settings.skip_finalize and bool(
+            self.settings.deepseek_api_key
         )
         if should_use_remote:
             self._set_phase(progress, f"{phase_suffix}_remote")
@@ -774,9 +766,7 @@ class Pipeline:
                     final = await self.deepseek.finalize(system_prompt, user_prompt)
                 usage = final.get("usage", {})
                 spent = int(
-                    usage.get("total_tokens")
-                    or final.get("charged_tokens")
-                    or 0
+                    usage.get("total_tokens") or final.get("charged_tokens") or 0
                 )
                 if spent:
                     DEEPSEEK_TOKENS.inc(spent)
@@ -911,20 +901,12 @@ class Pipeline:
     def _quality_critics(self) -> list[Agent]:
         if hasattr(self.registry, "quality_critics"):
             return list(self.registry.quality_critics())
-        return [
-            agent
-            for agent in self.registry.critics()
-            if agent.role != "security"
-        ]
+        return [agent for agent in self.registry.critics() if agent.role != "security"]
 
     def _security_critics(self) -> list[Agent]:
         if hasattr(self.registry, "security_critics"):
             return list(self.registry.security_critics())
-        return [
-            agent
-            for agent in self.registry.critics()
-            if agent.role == "security"
-        ]
+        return [agent for agent in self.registry.critics() if agent.role == "security"]
 
     @staticmethod
     def _select_diverse(

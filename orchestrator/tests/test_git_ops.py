@@ -1,4 +1,5 @@
 """Isolated git worktree transaction integration tests."""
+
 from __future__ import annotations
 
 import subprocess
@@ -82,7 +83,7 @@ def test_apply_patch_runs_tests_commits_and_preserves_active_checkout(
     configure_git_test(
         monkeypatch,
         tmp_path,
-        "python -c \"from pathlib import Path; "
+        'python -c "from pathlib import Path; '
         "assert Path('app.py').read_text() == 'new\\n'\"",
     )
 
@@ -92,7 +93,10 @@ def test_apply_patch_runs_tests_commits_and_preserves_active_checkout(
     assert result["worktree_isolated"] is True
     assert result["commit"]
     assert result["tests_rc"] == 0
-    assert run(tmp_path, "git", "branch", "--show-current").stdout.strip() == original_branch
+    assert (
+        run(tmp_path, "git", "branch", "--show-current").stdout.strip()
+        == original_branch
+    )
     assert run(tmp_path, "git", "rev-parse", "HEAD").stdout.strip() == head
     assert (tmp_path / "app.py").read_text(encoding="utf-8") == "old\n"
     branch_content = run(tmp_path, "git", "show", f"{result['branch']}:app.py").stdout
@@ -107,13 +111,18 @@ def test_failed_tests_roll_back_and_delete_branch(monkeypatch, tmp_path: Path) -
 
     assert result["applied"] is False
     assert any("tests failed" in error for error in result["errors"])
-    assert run(tmp_path, "git", "branch", "--show-current").stdout.strip() == original_branch
+    assert (
+        run(tmp_path, "git", "branch", "--show-current").stdout.strip()
+        == original_branch
+    )
     assert (tmp_path / "app.py").read_text(encoding="utf-8") == "old\n"
     branches = run(tmp_path, "git", "branch", "--format=%(refname:short)").stdout
     assert result["branch"] not in branches
 
 
-def test_stale_head_and_dirty_checkout_are_rejected(monkeypatch, tmp_path: Path) -> None:
+def test_stale_head_and_dirty_checkout_are_rejected(
+    monkeypatch, tmp_path: Path
+) -> None:
     _, head = init_repo(tmp_path)
     configure_git_test(monkeypatch, tmp_path, "true")
 
@@ -127,7 +136,9 @@ def test_stale_head_and_dirty_checkout_are_rejected(monkeypatch, tmp_path: Path)
     assert any("uncommitted" in error for error in dirty["errors"])
 
 
-def test_high_risk_patch_requires_explicit_approval(monkeypatch, tmp_path: Path) -> None:
+def test_high_risk_patch_requires_explicit_approval(
+    monkeypatch, tmp_path: Path
+) -> None:
     init_repo(tmp_path)
     configure_git_test(monkeypatch, tmp_path, "true")
 
@@ -193,7 +204,7 @@ def test_patch_that_only_creates_files_is_applied_and_committed(
     configure_git_test(
         monkeypatch,
         tmp_path,
-        "python -c \"from pathlib import Path; "
+        'python -c "from pathlib import Path; '
         "assert Path('tests/test_regression.py').is_file()\"",
     )
 
@@ -217,7 +228,7 @@ def test_test_run_side_effects_are_not_committed(monkeypatch, tmp_path: Path) ->
     configure_git_test(
         monkeypatch,
         tmp_path,
-        "python -c \"from pathlib import Path; "
+        'python -c "from pathlib import Path; '
         "Path('artifact.log').write_text('leaked'); "
         "Path('app.py').write_text('tampered\\n')\"",
     )

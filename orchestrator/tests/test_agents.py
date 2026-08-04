@@ -1,4 +1,5 @@
 """Agent registry validation, expansion, and capability tests."""
+
 from __future__ import annotations
 
 from pathlib import Path

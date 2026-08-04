@@ -1,5 +1,11 @@
 # Copy into a target repository as .github/workflows/swarm-checks.yml.
-# Customize the test command for the repository before making it required.
+#
+# READ THIS BEFORE MAKING IT A REQUIRED CHECK. The detection below is a
+# starting point, not something to ship as-is. Replace the "Run repository
+# tests" step with your repository's real, deterministic test command,
+# including however it installs dependencies. A generic `pip install pytest`
+# cannot know about your requirements file, so any project with a third-party
+# import fails at collection and the gate goes permanently red.
 name: swarm-generated-change
 
 on:
@@ -32,7 +38,15 @@ jobs:
         run: |
           set -euo pipefail
           if [[ -f pyproject.toml || -d tests ]]; then
-            python -m pip install pytest
+            # Install the project first. Tests that cannot import their own
+            # dependencies fail at collection, not because the patch is wrong.
+            if [[ -f pyproject.toml ]]; then
+              python -m pip install -e . || python -m pip install .
+            fi
+            for requirements in requirements.txt requirements-dev.txt; do
+              [[ -f "${requirements}" ]] && python -m pip install -r "${requirements}"
+            done
+            python -m pip install "pytest==9.0.2"
             python -m pytest -q
           elif [[ -f package-lock.json ]]; then
             npm ci
@@ -47,10 +61,14 @@ jobs:
             cargo test --all-targets
           else
             echo "No supported deterministic test command detected." >&2
+            echo "Replace this step with your repository's test command." >&2
             exit 1
           fi
 
       - name: Semgrep Community Edition
+        # `--config auto` resolves its ruleset over the network at run time, so
+        # a green required check can flip red with no code change. Commit a
+        # ruleset to the repository and point at it before relying on this.
         run: |
           python -m pip install semgrep==1.172.0
           semgrep scan --config auto --error --metrics=off

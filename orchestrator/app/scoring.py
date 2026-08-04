@@ -1,4 +1,5 @@
 """Weighted ranking and release eligibility for candidate patches."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -123,9 +124,7 @@ def score_draft(
     unique_evidence = list(dict.fromkeys(item for item in evidence if item))
     final_score = accumulated / total_weight if total_weight else 0.0
     patch_valid = bool(patch_validation and patch_validation.valid)
-    high_risk_paths = (
-        list(patch_validation.high_risk_paths) if patch_validation else []
-    )
+    high_risk_paths = list(patch_validation.high_risk_paths) if patch_validation else []
 
     reasons: list[str] = []
     if not patch_valid:

@@ -1,4 +1,5 @@
 """Prompt contracts for the coding swarm."""
+
 from __future__ import annotations
 
 from .models import CriticReview

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Validate model-roster coverage against the reviewed license manifest."""
+
 from __future__ import annotations
 
 import argparse

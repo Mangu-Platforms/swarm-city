@@ -1,4 +1,5 @@
 """Ollama protocol, structured output, and size-bound tests."""
+
 from __future__ import annotations
 
 import json
@@ -26,9 +27,7 @@ def _review_json() -> dict:
 
 
 def test_extract_json_from_fence_and_surrounding_text() -> None:
-    assert extract_json('```json\n{"correctness": 8}\n```') == {
-        "correctness": 8
-    }
+    assert extract_json('```json\n{"correctness": 8}\n```') == {"correctness": 8}
     assert extract_json('review: {"security": 9} trailing') == {"security": 9}
     assert extract_json("not json") == {}
 
@@ -60,7 +59,9 @@ async def test_chat_sends_json_schema_and_auth_header(
 
     assert CriticReview.model_validate_json(content).correctness == 9
     assert captured["payload"]["format"]["title"] == "CriticReview"
-    assert captured["payload"]["options"]["num_ctx"] == get_settings().local_context_tokens
+    assert (
+        captured["payload"]["options"]["num_ctx"] == get_settings().local_context_tokens
+    )
     assert captured["authorization"] == "Bearer secret-token"
 
 

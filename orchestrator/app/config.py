@@ -1,4 +1,5 @@
 """Application configuration with fail-closed startup validation."""
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -288,9 +289,7 @@ class Settings(BaseSettings):
         if self.auto_context_files > self.max_context_files:
             raise ValueError("AUTO_CONTEXT_FILES cannot exceed MAX_CONTEXT_FILES")
         if self.max_context_file_chars > self.max_context_chars:
-            raise ValueError(
-                "MAX_CONTEXT_FILE_CHARS cannot exceed MAX_CONTEXT_CHARS"
-            )
+            raise ValueError("MAX_CONTEXT_FILE_CHARS cannot exceed MAX_CONTEXT_CHARS")
         if self.minimum_candidate_score < 0 or self.minimum_candidate_score > 10:
             raise ValueError("MINIMUM_CANDIDATE_SCORE must be between 0 and 10")
         # Combinations that are individually valid but jointly unworkable. Each

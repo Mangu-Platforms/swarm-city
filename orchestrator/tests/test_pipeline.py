@@ -1,4 +1,5 @@
 """End-to-end swarm orchestration tests without model servers."""
+
 from __future__ import annotations
 
 import json
@@ -38,15 +39,11 @@ class FakeRegistry:
             Agent("draft-1", "draft", "coder-a", "http://unused"),
             Agent("draft-2", "draft", "coder-b", "http://unused"),
         ]
-        self._quality = [
-            Agent("critic-1", "critic", "reviewer", "http://unused")
-        ]
+        self._quality = [Agent("critic-1", "critic", "reviewer", "http://unused")]
         self._security = [
             Agent("security-1", "security", "security-reviewer", "http://unused")
         ]
-        self._tests = [
-            Agent("tests-1", "test_gen", "tester", "http://unused")
-        ]
+        self._tests = [Agent("tests-1", "test_gen", "tester", "http://unused")]
         self._finalizers = [
             Agent("final-1", "finalizer", "coder-final", "http://unused")
         ]
@@ -181,7 +178,9 @@ async def test_pipeline_rejects_bad_synthesis_and_falls_back_to_re_reviewed_buil
     assert "eligible-candidate-fallback" in result["finalized_by"]
     assert result["release_gate"]["status"] == "ready"
     assert len(result["final_review_attempts"]) == 3
-    assert any("re-reviewed eligible builder" in warning for warning in result["warnings"])
+    assert any(
+        "re-reviewed eligible builder" in warning for warning in result["warnings"]
+    )
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,5 @@
 """Unified-diff extraction, structural parsing, and safety validation."""
+
 from __future__ import annotations
 
 import re
@@ -164,9 +165,7 @@ def validate_diff(
 
     for section in sections:
         section_paths = [
-            path
-            for path in (section.old_path, section.new_path)
-            if path != "/dev/null"
+            path for path in (section.old_path, section.new_path) if path != "/dev/null"
         ]
         for normalized in section_paths:
             if _is_sensitive(Path(normalized)):
@@ -181,7 +180,9 @@ def validate_diff(
             if _is_high_risk(Path(normalized)):
                 high_risk.append(normalized)
 
-        target = section.new_path if section.new_path != "/dev/null" else section.old_path
+        target = (
+            section.new_path if section.new_path != "/dev/null" else section.old_path
+        )
         if target in targets:
             errors.append(f"patch contains duplicate file section: {target}")
         targets.add(target)
@@ -209,9 +210,7 @@ def validate_diff(
     if hunk_count > max_hunks:
         errors.append(f"patch contains {hunk_count} hunks; maximum is {max_hunks}")
     if added_lines > max_added_lines:
-        errors.append(
-            f"patch adds {added_lines} lines; maximum is {max_added_lines}"
-        )
+        errors.append(f"patch adds {added_lines} lines; maximum is {max_added_lines}")
     if deleted_lines > max_deleted_lines:
         errors.append(
             f"patch deletes {deleted_lines} lines; maximum is {max_deleted_lines}"
@@ -237,7 +236,9 @@ def validate_diff(
 
 def _parse_sections(diff: str) -> tuple[list[_Section], list[str]]:
     lines = diff.splitlines()
-    starts = [index for index, line in enumerate(lines) if line.startswith("diff --git ")]
+    starts = [
+        index for index, line in enumerate(lines) if line.startswith("diff --git ")
+    ]
     if not starts:
         return [], ["patch contains no `diff --git` file headers"]
 

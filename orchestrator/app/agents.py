@@ -1,4 +1,5 @@
 """Validated registry for logical Ollama-compatible swarm agents."""
+
 from __future__ import annotations
 
 import itertools
@@ -62,7 +63,9 @@ def _expand_environment(value: str, *, field_name: str) -> str:
 
     expanded = _ENV_PATTERN.sub(replace, value).strip()
     if "${" in expanded:
-        raise RuntimeError(f"agent config {field_name} contains invalid expansion syntax")
+        raise RuntimeError(
+            f"agent config {field_name} contains invalid expansion syntax"
+        )
     return expanded
 
 
@@ -148,9 +151,7 @@ class AgentRegistry:
                     f"agent entry {entry_index} count must be between 1 and 64"
                 )
             if not 0 <= temperature <= 2:
-                raise RuntimeError(
-                    f"agent entry {entry_index} temperature must be 0-2"
-                )
+                raise RuntimeError(f"agent entry {entry_index} temperature must be 0-2")
             if not 0 < weight <= 100:
                 raise RuntimeError(
                     f"agent entry {entry_index} weight must be greater than 0 and <= 100"
@@ -161,13 +162,13 @@ class AgentRegistry:
                 raise RuntimeError(f"agent entry {entry_index} tags must be a list")
             tags = tuple(
                 dict.fromkeys(
-                    str(tag).strip().lower()
-                    for tag in raw_tags
-                    if str(tag).strip()
+                    str(tag).strip().lower() for tag in raw_tags if str(tag).strip()
                 )
             )
             if any(len(tag) > 48 for tag in tags):
-                raise RuntimeError(f"agent entry {entry_index} contains an oversized tag")
+                raise RuntimeError(
+                    f"agent entry {entry_index} contains an oversized tag"
+                )
 
             configured_endpoint = entry.get("endpoint")
             system_prompt = str(entry.get("system_prompt", "")).strip()

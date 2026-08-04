@@ -47,11 +47,15 @@ jobs:
           PYTHONPATH: orchestrator
         run: python -m pytest -q orchestrator/tests
 
+      - name: Shell checks
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck install.sh provisioning/*.sh
+
       - name: Release assets and model licenses
         run: |
           python provisioning/check_licenses.py
           python provisioning/validate_release.py
-          bash -n install.sh provisioning/*.sh
 
   container:
     name: Compose and container build
@@ -61,6 +65,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Validate Compose
+        # The secrets are required at run time by design; these placeholders
+        # let the structural check run on a tree with no .env.
+        env:
+          GRAFANA_PASSWORD: validation-placeholder
+          SWARM_API_TOKEN: validation-placeholder
         run: docker compose config --quiet
 
       - name: Build orchestrator image

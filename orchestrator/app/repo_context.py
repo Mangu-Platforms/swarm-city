@@ -1,4 +1,5 @@
 """Safe, provenance-aware repository context discovery for coding tasks."""
+
 from __future__ import annotations
 
 import hashlib
@@ -208,9 +209,7 @@ _BARE_SECRET_RE = re.compile(
     rf"(?im)^([ \t]*[\"']?{_SECRET_IDENTIFIER}[\"']?[ \t]*[:=][ \t]*)"
     r"([^\s#\"'][^\n]*)$"
 )
-_URL_CREDENTIALS_RE = re.compile(
-    r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s:/@]+):([^\s/@]+)@"
-)
+_URL_CREDENTIALS_RE = re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s:/@]+):([^\s/@]+)@")
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*")
 _BASIC_AUTH_RE = re.compile(r"(?i)\bBasic\s+[A-Za-z0-9+/]{16,}={0,2}")
 _TOKEN_PATTERNS = [
@@ -452,7 +451,10 @@ class RepositoryContextBuilder:
         return list(dict.fromkeys(expanded))
 
     def _add_repository_file(self, bundle: ContextBundle, relative: str) -> None:
-        if relative in bundle.files or len(bundle.files) >= self.settings.max_context_files:
+        if (
+            relative in bundle.files
+            or len(bundle.files) >= self.settings.max_context_files
+        ):
             return
         absolute = self._safe_absolute(relative)
         if absolute is None or not absolute.is_file():
@@ -561,8 +563,15 @@ class RepositoryContextBuilder:
             score += 8
         if path.name in IMPORTANT_FILENAMES:
             score += 2
-        if any(part.lower() in {"test", "tests", "__tests__", "spec"} for part in path.parts):
-            score += 5 if terms & {"test", "tests", "bug", "error", "fix", "regression"} else 1
+        if any(
+            part.lower() in {"test", "tests", "__tests__", "spec"}
+            for part in path.parts
+        ):
+            score += (
+                5
+                if terms & {"test", "tests", "bug", "error", "fix", "regression"}
+                else 1
+            )
 
         sample = self._read_sample(relative)
         if sample:

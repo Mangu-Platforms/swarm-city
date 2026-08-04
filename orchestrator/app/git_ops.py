@@ -1,4 +1,5 @@
 """Isolated, fail-closed patch testing, commit, and optional PR creation."""
+
 from __future__ import annotations
 
 import json
@@ -90,7 +91,10 @@ def _run(
     output_limit = max_output_chars or settings.max_command_output_chars
     timeout = max(1, int(timeout))
     log.info("run: %s", shlex.join(command))
-    with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
+    with (
+        tempfile.TemporaryFile() as stdout_file,
+        tempfile.TemporaryFile() as stderr_file,
+    ):
         try:
             process = subprocess.Popen(
                 list(command),
@@ -700,9 +704,7 @@ def apply_patch_and_pr(
                     "could not inspect changed paths",
                 )
                 changed_paths = {
-                    line.strip()
-                    for line in changed.stdout.splitlines()
-                    if line.strip()
+                    line.strip() for line in changed.stdout.splitlines() if line.strip()
                 }
                 validated_paths = set(validation.paths)
                 unexpected = sorted(changed_paths - validated_paths)

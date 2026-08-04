@@ -1,4 +1,5 @@
 """Task queue, idempotency, persistence, and cancellation tests."""
+
 from __future__ import annotations
 
 import asyncio
@@ -125,11 +126,15 @@ async def test_corrupt_state_files_are_discarded_instead_of_blocking_startup(
     store.mkdir(parents=True, exist_ok=True)
     (store / "0123456789abcdef.json").write_bytes(b"\xff\xfe not utf-8")
     (store / "fedcba9876543210.json").write_text(
-        json.dumps({"task_id": "fedcba9876543210", "status": "done", "created_at": None}),
+        json.dumps(
+            {"task_id": "fedcba9876543210", "status": "done", "created_at": None}
+        ),
         encoding="utf-8",
     )
     (store / "abcdef0123456789.json").write_text(
-        json.dumps({"task_id": "abcdef0123456789", "status": "done", "created_at": "yesterday"}),
+        json.dumps(
+            {"task_id": "abcdef0123456789", "status": "done", "created_at": "yesterday"}
+        ),
         encoding="utf-8",
     )
     (store / "backup.json").write_text("{}", encoding="utf-8")
@@ -156,7 +161,9 @@ async def test_state_files_outside_retention_are_removed_from_disk(
     for index in range(40):
         task_id = f"{index:016x}"
         (store / f"{task_id}.json").write_text(
-            json.dumps({"task_id": task_id, "status": "done", "created_at": float(index)}),
+            json.dumps(
+                {"task_id": task_id, "status": "done", "created_at": float(index)}
+            ),
             encoding="utf-8",
         )
 

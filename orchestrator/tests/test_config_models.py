@@ -1,4 +1,5 @@
 """Configuration and request validation tests."""
+
 from __future__ import annotations
 
 import pytest
@@ -123,7 +124,10 @@ def test_protect_metrics_without_a_token_is_refused(monkeypatch) -> None:
 def test_jointly_unworkable_settings_are_refused(monkeypatch) -> None:
     for variables, expected in (
         ({"AGENT_TIMEOUT_S": "3600", "TASK_TIMEOUT_S": "60"}, "AGENT_TIMEOUT_S"),
-        ({"LOCAL_MAX_TOKENS": "900000", "LOCAL_CONTEXT_TOKENS": "2048"}, "LOCAL_MAX_TOKENS"),
+        (
+            {"LOCAL_MAX_TOKENS": "900000", "LOCAL_CONTEXT_TOKENS": "2048"},
+            "LOCAL_MAX_TOKENS",
+        ),
         ({"MAX_INLINE_CONTEXT_CHARS": "10000000"}, "MAX_INLINE_CONTEXT_CHARS"),
         ({"TASK_RETENTION": "2", "MAX_QUEUED_TASKS": "20"}, "TASK_RETENTION"),
     ):

@@ -48,6 +48,15 @@ services:
     depends_on:
       ollama:
         condition: service_healthy
+    # .env is documented as the configuration surface, so pass all of it. The
+    # explicit entries below still win, because `environment` overrides
+    # `env_file`, which keeps container-internal paths and service names
+    # authoritative. Without this, settings that Compose does not enumerate --
+    # patch limits, scoring weights, retention, git timeouts -- look configured
+    # in .env and are silently ignored by the container.
+    env_file:
+      - path: .env
+        required: false
     environment:
       OLLAMA_URLS: http://ollama:11434
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
@@ -157,7 +166,6 @@ services:
       - --config.file=/etc/prometheus/prometheus.yml
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
-      - --web.enable-lifecycle
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prom-data:/prometheus
@@ -165,6 +173,9 @@ services:
       - "127.0.0.1:9090:9090"
     restart: unless-stopped
     read_only: true
+    pids_limit: 512
+    mem_limit: ${PROMETHEUS_MEM_LIMIT:-1g}
+    cpus: ${PROMETHEUS_CPUS:-1.0}
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m
     cap_drop:
@@ -181,7 +192,10 @@ services:
     container_name: swarm-grafana
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
-      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-}
+      # Grafana ignores an empty override and falls back to the packaged
+      # admin/admin. Fail the compose run instead of publishing a dashboard
+      # with default credentials on a port any local user can reach.
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD in .env}
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_SECURITY_COOKIE_SECURE: "false"
@@ -193,6 +207,9 @@ services:
     ports:
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
+    pids_limit: 512
+    mem_limit: ${GRAFANA_MEM_LIMIT:-512m}
+    cpus: ${GRAFANA_CPUS:-1.0}
     cap_drop:
       - ALL
     security_opt:

@@ -1,4 +1,5 @@
 """FastAPI control plane for the repository-aware coding swarm."""
+
 from __future__ import annotations
 
 import asyncio
@@ -402,13 +403,23 @@ async def _model_checks(registry: AgentRegistry) -> dict:
 
 
 @app.get("/healthz")
-async def healthz(request: Request) -> dict:
-    """Liveness probe that does not depend on model availability."""
+async def healthz(request: Request, response: Response) -> dict:
+    """Liveness probe that does not depend on model availability.
+
+    Returns 503 when the process is serving but its registry or task manager
+    is absent. Encoding that only in the body made every probe useless:
+    Docker's healthcheck, `depends_on: service_healthy`, and the Kubernetes
+    httpGet liveness probe all treat any 2xx as healthy, so a non-functional
+    orchestrator stayed "healthy" forever and was never restarted.
+    """
 
     registry = getattr(request.app.state, "registry", None)
     manager = getattr(request.app.state, "task_manager", None)
+    ok = registry is not None and manager is not None
+    if not ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
     return {
-        "ok": registry is not None and manager is not None,
+        "ok": ok,
         "version": app.version,
         "agents": len(registry.agents) if registry else 0,
     }
@@ -436,14 +447,15 @@ async def readyz(request: Request, response: Response) -> dict:
         ready = bool(reachable) and any(not entry["missing"] for entry in reachable)
     if not ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    # The probe is unauthenticated, so the body stays free of endpoint URLs,
+    # model rosters, and raw exception text. Use the authenticated
+    # /model-list route for the detail needed to diagnose a failure.
     return {
         "ready": ready,
         "version": app.version,
-        "agents": len(registry.agents),
         "configured_endpoints": len(endpoints),
         "reachable_endpoints": len(reachable),
-        "missing_models": missing,
-        "endpoints": endpoints,
+        "missing_model_count": sum(len(models) for models in missing.values()),
     }
 
 

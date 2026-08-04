@@ -1,4 +1,5 @@
 """Repository context selection, provenance, and redaction tests."""
+
 from __future__ import annotations
 
 import subprocess

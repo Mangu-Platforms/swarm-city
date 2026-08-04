@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Host-side CLI for the LLM Swarm coding API."""
+
 from __future__ import annotations
 
 import argparse
@@ -147,7 +148,9 @@ class SwarmClient:
 
         value = self.request(method, path, payload, extra_headers)
         if not isinstance(value, dict):
-            raise ApiError(f"server returned {type(value).__name__}, expected an object")
+            raise ApiError(
+                f"server returned {type(value).__name__}, expected an object"
+            )
         return value
 
 
@@ -198,9 +201,7 @@ def command_task(args: argparse.Namespace) -> int:
         "allow_high_risk_paths": args.approve_high_risk,
     }
     headers = (
-        {"Idempotency-Key": args.idempotency_key}
-        if args.idempotency_key
-        else None
+        {"Idempotency-Key": args.idempotency_key} if args.idempotency_key else None
     )
     submitted = client.request_object("POST", "/tasks", payload, extra_headers=headers)
     task_id = submitted.get("task_id")
@@ -281,9 +282,7 @@ def command_list(args: argparse.Namespace) -> int:
     query = {"limit": args.limit}
     if args.status:
         query["status"] = args.status
-    _print_json(
-        _client(args).request("GET", f"/tasks?{urllib.parse.urlencode(query)}")
-    )
+    _print_json(_client(args).request("GET", f"/tasks?{urllib.parse.urlencode(query)}"))
     return 0
 
 
