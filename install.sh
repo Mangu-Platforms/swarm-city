@@ -35,6 +35,7 @@ if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg |
     sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
   sudo chmod a+r /etc/apt/keyrings/docker.gpg
+  # shellcheck disable=SC1091  # /etc/os-release exists at run time, not lint time
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" |
     sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
   sudo apt-get update -y
