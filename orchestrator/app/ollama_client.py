@@ -75,7 +75,21 @@ async def chat(
                     headers=settings.ollama_headers,
                 )
                 response.raise_for_status()
-                data = response.json()
+                # Decode the body only after bounding it. response.json() would
+                # otherwise buffer and parse an arbitrarily large body — on
+                # every retry — before the output limit below is consulted.
+                body = response.content
+                if len(body) > settings.max_agent_output_chars * 4:
+                    raise OllamaProtocolError(
+                        f"agent {agent.agent_id} response exceeds the "
+                        "MAX_AGENT_OUTPUT_CHARS transfer ceiling"
+                    )
+                try:
+                    data = json.loads(body)
+                except (ValueError, RecursionError) as exc:
+                    raise OllamaProtocolError(
+                        f"agent {agent.agent_id} returned invalid JSON"
+                    ) from exc
                 if not isinstance(data, dict):
                     raise OllamaProtocolError(
                         f"agent {agent.agent_id} returned a non-object response"
@@ -187,10 +201,14 @@ def extract_json(text: str) -> dict:
         if len(lines) >= 3:
             stripped = "\n".join(lines[1:-1]).strip()
 
+    # Deeply nested input makes json raise RecursionError, which is not a
+    # JSONDecodeError and is not in any caller's retry tuple. One badly behaved
+    # model response would otherwise abort the whole task instead of counting
+    # as an invalid review.
     try:
         parsed = json.loads(stripped)
         return parsed if isinstance(parsed, dict) else {}
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         pass
 
     decoder = json.JSONDecoder()
@@ -199,7 +217,7 @@ def extract_json(text: str) -> dict:
             continue
         try:
             parsed, _ = decoder.raw_decode(stripped[index:])
-        except json.JSONDecodeError:
+        except (ValueError, RecursionError):
             continue
         if isinstance(parsed, dict):
             return parsed

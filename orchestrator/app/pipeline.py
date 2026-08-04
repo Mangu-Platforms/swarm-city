@@ -780,7 +780,9 @@ class Pipeline:
                 )
                 if spent:
                     DEEPSEEK_TOKENS.inc(spent)
-                DEEPSEEK_BUDGET_USED.set(self.deepseek.budget.used())
+                DEEPSEEK_BUDGET_USED.set(
+                    await asyncio.to_thread(self.deepseek.budget.used)
+                )
                 result.setdefault("remote_calls", []).append(
                     {
                         "phase": phase_suffix,
