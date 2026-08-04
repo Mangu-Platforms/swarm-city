@@ -197,7 +197,12 @@ class AgentRegistry:
                         f"agent entry {entry_index} has an invalid endpoint"
                     )
 
-                agent_id = _safe_identifier(f"{role}-{model}-{index}")
+                # Include the roster entry, not just role/model/index: two
+                # entries of the same role legitimately resolve to the same
+                # model whenever an operator points SWARM_CODER_MODEL and
+                # SWARM_REASONER_MODEL at one tag, which is the normal
+                # single-model setup on a memory-constrained host.
+                agent_id = _safe_identifier(f"{role}-e{entry_index}-{model}-{index}")
                 if agent_id in seen_ids:
                     raise RuntimeError(f"duplicate generated agent id: {agent_id}")
                 seen_ids.add(agent_id)
@@ -228,11 +233,47 @@ class AgentRegistry:
     def _validate_capabilities(self) -> None:
         if not self.by_role("draft"):
             raise RuntimeError("agent config requires at least one draft agent")
-        if not self.quality_critics():
+        quality = self.quality_critics()
+        security = self.security_critics()
+        if not quality:
             raise RuntimeError("agent config requires at least one quality critic")
-        if self.settings.require_security_review and not self.security_critics():
+        if self.settings.require_security_review and not security:
             raise RuntimeError(
                 "REQUIRE_SECURITY_REVIEW=true requires at least one security agent"
+            )
+
+        # A gate that the configured roster can never satisfy is worse than a
+        # startup failure: every task runs to completion, spends its full model
+        # budget, and is then blocked for a reason the operator cannot see.
+        available_reviews = len(quality) + (
+            len(security) if self.settings.require_security_review else 0
+        )
+        if available_reviews < self.settings.minimum_critic_reviews:
+            raise RuntimeError(
+                f"MINIMUM_CRITIC_REVIEWS={self.settings.minimum_critic_reviews} "
+                f"can never be met: the roster provides {available_reviews} "
+                "reviewer(s) per candidate"
+            )
+        if (
+            self.settings.require_security_review
+            and len(security) < self.settings.minimum_security_reviews
+        ):
+            raise RuntimeError(
+                f"MINIMUM_SECURITY_REVIEWS={self.settings.minimum_security_reviews} "
+                f"can never be met: the roster provides {len(security)} security "
+                "agent(s)"
+            )
+        if len(quality) < self.settings.final_review_count:
+            raise RuntimeError(
+                f"FINAL_REVIEW_COUNT={self.settings.final_review_count} can never "
+                f"be met: the roster provides {len(quality)} quality critic(s)"
+            )
+        if len(self.by_role("draft")) < self.settings.n_draft:
+            log.warning(
+                "N_DRAFT=%d exceeds the %d configured draft agent(s); the swarm "
+                "will run with the smaller number",
+                self.settings.n_draft,
+                len(self.by_role("draft")),
             )
         if (
             not self.settings.skip_finalize

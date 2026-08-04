@@ -41,7 +41,11 @@ def _safe_relative_path(raw_path: str, *, allow_root: bool = True) -> str:
 class TaskRequest(BaseModel):
     """A bounded, repository-aware coding task."""
 
-    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    # Deliberately no str_strip_whitespace: it applies to every string in the
+    # model, including the *values* of context_files. Stripping those destroys
+    # leading indentation and trailing newlines, so builders see code that does
+    # not match the repository and the diffs they emit fail `git apply --check`.
+    model_config = ConfigDict(extra="forbid")
 
     task: str = Field(min_length=3, description="What to build, fix, or review")
     context_files: dict[str, str] = Field(
@@ -82,6 +86,11 @@ class TaskRequest(BaseModel):
             "infrastructure control files when apply=true"
         ),
     )
+
+    @field_validator("task", "language", mode="before")
+    @classmethod
+    def strip_text_fields(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
 
     @field_validator("context_paths")
     @classmethod
@@ -194,14 +203,16 @@ class CriticReview(BaseModel):
     style: float = Field(ge=0, le=10)
     tests: float = Field(ge=0, le=10)
     confidence: float = Field(ge=0, le=10)
-    blockers: list[str] = Field(default_factory=list, max_length=12)
-    evidence: list[str] = Field(default_factory=list, max_length=12)
+    blockers: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
     one_fix: str = Field(default="", max_length=2000)
 
     @field_validator("blockers", "evidence")
     @classmethod
     def validate_text_items(cls, items: list[str]) -> list[str]:
-        cleaned = [item.strip() for item in items if item.strip()]
-        if any(len(item) > 1000 for item in cleaned):
-            raise ValueError("critic item exceeds 1000 characters")
-        return list(dict.fromkeys(cleaned))
+        # Bound by truncation, not rejection. A `max_length` constraint here
+        # discards the whole review, so the reviewer that enumerated the most
+        # problems is the one whose findings are thrown away — exactly
+        # backwards for a security gate.
+        cleaned = [item.strip()[:1000] for item in items if item.strip()]
+        return list(dict.fromkeys(cleaned))[:12]

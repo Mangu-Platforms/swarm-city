@@ -182,7 +182,7 @@ class Settings(BaseSettings):
 
     # API, readiness, and retained-state limits.
     swarm_api_token: str = Field(default="", alias="SWARM_API_TOKEN")
-    require_api_token: bool = Field(default=False, alias="REQUIRE_API_TOKEN")
+    require_api_token: bool = Field(default=True, alias="REQUIRE_API_TOKEN")
     protect_metrics: bool = Field(default=False, alias="PROTECT_METRICS")
     max_request_body_bytes: int = Field(
         default=2_000_000,
@@ -293,6 +293,27 @@ class Settings(BaseSettings):
             )
         if self.minimum_candidate_score < 0 or self.minimum_candidate_score > 10:
             raise ValueError("MINIMUM_CANDIDATE_SCORE must be between 0 and 10")
+        # Combinations that are individually valid but jointly unworkable. Each
+        # of these otherwise fails late — after queueing, context building, and
+        # in some cases a full round of model calls.
+        if self.agent_timeout_s >= self.task_timeout_s:
+            raise ValueError(
+                "AGENT_TIMEOUT_S must be smaller than TASK_TIMEOUT_S; otherwise "
+                "every task expires before a single agent can finish"
+            )
+        if self.local_max_tokens > self.local_context_tokens:
+            raise ValueError("LOCAL_MAX_TOKENS cannot exceed LOCAL_CONTEXT_TOKENS")
+        if self.max_inline_context_chars > self.max_agent_input_chars:
+            raise ValueError(
+                "MAX_INLINE_CONTEXT_CHARS cannot exceed MAX_AGENT_INPUT_CHARS; "
+                "accepted requests would fail on every agent call"
+            )
+        if self.task_retention <= self.max_queued_tasks + self.max_active_tasks:
+            raise ValueError(
+                "TASK_RETENTION must exceed MAX_QUEUED_TASKS + MAX_ACTIVE_TASKS; "
+                "otherwise a completed task can be evicted before its caller "
+                "reads the result"
+            )
         if not self.ollama_endpoints:
             raise ValueError("OLLAMA_URLS must contain at least one endpoint")
         for endpoint in self.ollama_endpoints:
@@ -328,6 +349,11 @@ class Settings(BaseSettings):
         if self.require_api_token and not self.swarm_api_token:
             raise ValueError(
                 "REQUIRE_API_TOKEN=true requires a non-empty SWARM_API_TOKEN"
+            )
+        if self.protect_metrics and not self.swarm_api_token:
+            raise ValueError(
+                "PROTECT_METRICS=true requires a non-empty SWARM_API_TOKEN; "
+                "without one the metrics route would serve every caller"
             )
         if self.open_pr and not self.enable_git_apply:
             raise ValueError("OPEN_PR=true requires ENABLE_GIT_APPLY=true")

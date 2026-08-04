@@ -13,10 +13,14 @@ from collections import OrderedDict
 from pathlib import Path
 
 from .config import Settings, get_settings
+from .locks import LockTimeout
 from .metrics import ACTIVE_TASKS, QUEUED_TASKS, TASK_DURATION, TASKS_TOTAL
 from .pipeline import Pipeline
 
 TERMINAL_STATUSES = {"done", "error", "cancelled"}
+# An idempotency key that resolved to one of these is spent rather than
+# answered, so an automated retry is allowed to run the work again.
+REPLAYABLE_STATUSES = {"error", "cancelled"}
 log = logging.getLogger(__name__)
 
 
@@ -65,7 +69,15 @@ class TaskManager:
         self.pipeline = pipeline
         self.settings = settings or get_settings()
         self.store_dir = Path(self.settings.task_store_dir).expanduser()
-        self.store_dir.mkdir(parents=True, exist_ok=True)
+        self.store_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # mkdir's mode is masked by umask and is ignored entirely when the
+        # directory already exists, which is the normal case for a mounted
+        # data volume. Persisted state includes task text, model output, and
+        # patches, so narrow the directory explicitly.
+        try:
+            os.chmod(self.store_dir, 0o700)
+        except OSError:
+            log.warning("could not restrict permissions on %s", self.store_dir)
         self.tasks: OrderedDict[str, _TaskState] = OrderedDict()
         self.handles: dict[str, asyncio.Task[None]] = {}
         self.idempotency: dict[str, tuple[str, str]] = {}
@@ -86,8 +98,12 @@ class TaskManager:
                         "idempotency key was already used for a different request"
                     )
                 state = self.tasks.get(task_id)
-                if state is not None:
+                # A key whose task failed or was interrupted by a restart is
+                # spent, not answered. Replaying the failure would make an
+                # automated retry silently no-op forever.
+                if state is not None and state["status"] not in REPLAYABLE_STATUSES:
                     return self._submission_response(state, reused=True)
+                self.idempotency.pop(idempotency_key, None)
 
         queued_count = sum(
             state.get("status") == "queued" for state in self.tasks.values()
@@ -186,6 +202,16 @@ class TaskManager:
             )
             TASKS_TOTAL.labels(status="cancelled").inc()
             raise
+        except LockTimeout as exc:
+            log.warning("task %s could not acquire a lock: %s", task_id, exc)
+            state.update(
+                status="error",
+                phase="lock_contention",
+                error=f"lock contention: {exc}",
+                finished_at=time.time(),
+                updated_at=time.time(),
+            )
+            TASKS_TOTAL.labels(status="error").inc()
         except TimeoutError:
             log.warning("task %s exceeded its timeout", task_id)
             state.update(
@@ -318,25 +344,59 @@ class TaskManager:
         path = self._state_path(task_id)
         temporary = path.with_suffix(f".{os.getpid()}.tmp")
         payload = json.dumps(dict(state), indent=2, sort_keys=True, default=str)
-        with temporary.open("w", encoding="utf-8") as handle:
+        # Create the file already private. Setting the mode after writing leaves
+        # a window in which task text, model output, and patches sit on disk at
+        # the ambient umask.
+        descriptor = os.open(
+            temporary,
+            os.O_CREAT | os.O_TRUNC | os.O_WRONLY,
+            0o600,
+        )
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        temporary.replace(path)
+        # Without an fsync of the directory the rename itself can be lost on
+        # power failure, even though the file contents were durable.
         try:
-            os.chmod(temporary, 0o600)
+            directory = os.open(self.store_dir, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(directory)
         except OSError:
             pass
-        temporary.replace(path)
+        finally:
+            os.close(directory)
 
     def _load_retained_states(self) -> None:
+        """Load retained state, discarding anything unreadable.
+
+        Startup must survive whatever is in the data volume. A single corrupt,
+        truncated, or foreign file here would otherwise raise inside the
+        application lifespan and put the container into a permanent crash loop
+        with no way to recover short of wiping the volume by hand.
+        """
+
+        for stale in self.store_dir.glob("*.tmp"):
+            try:
+                stale.unlink()
+            except OSError:
+                log.warning("could not remove stale task state file %s", stale.name)
+
         loaded: list[dict] = []
+        unreadable: list[Path] = []
         for path in self.store_dir.glob("*.json"):
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError):
+            except (OSError, ValueError):
+                unreadable.append(path)
                 continue
             if not isinstance(raw, dict) or not re_full_task_id(str(raw.get("task_id", ""))):
+                unreadable.append(path)
                 continue
+            raw["created_at"] = _as_timestamp(raw.get("created_at"))
             if raw.get("status") not in TERMINAL_STATUSES:
                 raw.update(
                     status="error",
@@ -347,7 +407,27 @@ class TaskManager:
                 )
             loaded.append(raw)
 
-        loaded.sort(key=lambda item: float(item.get("created_at", 0)))
+        if unreadable:
+            log.warning(
+                "discarded %d unreadable task state file(s): %s",
+                len(unreadable),
+                ", ".join(sorted(path.name for path in unreadable)[:10]),
+            )
+            for path in unreadable:
+                try:
+                    path.unlink()
+                except OSError:
+                    pass
+
+        loaded.sort(key=lambda item: item["created_at"])
+        # TASK_RETENTION bounds the store, not just memory. Files outside the
+        # retained window are removed rather than left to accumulate and be
+        # re-parsed on every restart.
+        for raw in loaded[: max(0, len(loaded) - self.settings.task_retention)]:
+            try:
+                self._state_path(str(raw["task_id"])).unlink()
+            except OSError:
+                pass
         for raw in loaded[-self.settings.task_retention :]:
             state = _TaskState(raw, persist_callback=self._persist_state)
             task_id = state["task_id"]
@@ -389,3 +469,12 @@ class TaskManager:
 
 def re_full_task_id(value: str) -> bool:
     return len(value) == 16 and all(character in "0123456789abcdef" for character in value)
+
+
+def _as_timestamp(value: object) -> float:
+    """Coerce a persisted timestamp, tolerating null and non-numeric values."""
+
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
