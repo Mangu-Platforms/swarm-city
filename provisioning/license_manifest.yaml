@@ -1,0 +1,32 @@
+# Every default model tag used by any bundled profile must be reviewed here.
+# This is an inventory and CI gate, not legal advice; re-check upstream terms.
+models:
+  - name: qwen2.5-coder:7b
+    license: Apache-2.0
+    commercial_use: true
+    source: https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct
+
+  - name: qwen3-coder:30b
+    license: Apache-2.0
+    commercial_use: true
+    source: https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct
+
+  - name: qwen3:8b
+    license: Apache-2.0
+    commercial_use: true
+    source: https://huggingface.co/Qwen/Qwen3-8B
+
+  - name: qwen3:14b
+    license: Apache-2.0
+    commercial_use: true
+    source: https://huggingface.co/Qwen/Qwen3-14B
+
+  - name: qwen3:30b
+    license: Apache-2.0
+    commercial_use: true
+    source: https://huggingface.co/Qwen/Qwen3-30B-A3B-Instruct-2507
+
+  - name: gpt-oss:20b
+    license: Apache-2.0
+    commercial_use: true
+    source: https://huggingface.co/openai/gpt-oss-20b

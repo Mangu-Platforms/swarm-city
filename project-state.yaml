@@ -1,0 +1,129 @@
+mission:
+  name: LLM Swarm Production Revamp
+  purpose: Build a bounded, repository-aware multi-agent coding swarm that drafts, reviews, verifies, and safely releases code changes.
+  owner: user
+  constraints:
+    - Preserve the swarm architecture as the primary product.
+    - Keep providers and models replaceable.
+    - Never mutate the user's active checkout during verification.
+    - Require evidence before a patch is eligible for release.
+    - Fail closed when deployment-specific isolation or credentials are absent.
+current_milestone:
+  objective: Harden the stronger v2 archive into a production-minded v3 reference package.
+  acceptance_criteria:
+    - All unit, adversarial, API, persistence, release-asset, and Git integration tests pass.
+    - Every model response is bounded and critic output is schema validated.
+    - Queue capacity, task timeout, idempotency, cancellation, and persistent task state are enforced.
+    - Patch application uses an isolated Git worktree with stale-base, Git-config, sandbox, and high-risk gates.
+    - Documentation, deployment files, model profiles, monitoring, and operational runbooks match the implementation.
+    - A deterministic source archive and SHA-256 checksum are produced only after verification.
+  status: completed
+  dependencies:
+    - Python 3.11 or newer
+    - Ollama-compatible model endpoint for live operation
+    - Operator-controlled external test sandbox before production apply mode
+    - Optional DeepSeek V4 API key
+  rollback: Original uploaded archives remain unchanged; the revamp was built in a separate directory.
+architecture:
+  components:
+    - FastAPI authenticated control plane
+    - bounded durable task manager
+    - repository context and provenance builder
+    - independent builder pool
+    - quality and security reviewer pools
+    - independent test specialist
+    - local or optional remote synthesizer
+    - bounded repair and final review gate
+    - deterministic patch validator
+    - cancellable isolated Git worktree transaction worker
+    - Prometheus and Grafana observability
+  decisions:
+    - Use llm-swarm-coding-v2.zip as the base because it includes tests, repository context, patch validation, CLI, and monitoring.
+    - Treat task text, repository content, model output, patches, Git config, and generated tests as untrusted.
+    - Require exact model tags for readiness.
+    - Preserve local finalization so remote synthesis remains optional.
+    - Refuse generated-code execution without an external sandbox by default.
+    - Keep the Kubernetes reference read-only and public-egress-denied until operator controls are supplied.
+experiments:
+  completed:
+    - name: baseline-v2-tests
+      result: 16 tests passed before hardening changes.
+    - name: adversarial-safety-hardening
+      result: Closed timeout, queue, cancellation, path, prompt, schema, Git, and transaction failure modes covered by tests.
+    - name: final-release-verification
+      result: 57 tests passed; compilation, license parity, release assets, shell syntax, and Git whitespace checks passed.
+  active: []
+  proposed:
+    - Live-model quality and latency benchmark on the user's target hardware.
+    - End-to-end exact-roster Ollama smoke test.
+    - External sandbox escape and resource-exhaustion test suite.
+    - Draft PR smoke test against a disposable repository and least-privilege GitHub credential.
+evaluations:
+  baselines:
+    v1_files: 34
+    v1_automated_tests: 0
+    v2_files: 56
+    v2_unit_tests: 16 passed
+  latest_results:
+    automated_tests: 57 passed
+    python_runtime: 3.13.5 local verification; project minimum 3.11
+    compileall: passed
+    model_license_parity: passed for 6 exact tags across 4 rosters
+    static_release_assets: passed
+    shell_syntax: passed
+    git_diff_check: passed
+    ruff_local: not executed because Ruff was unavailable in the build environment; pinned CI gate configured
+    docker_compose_runtime: not executed because Docker was unavailable; static Compose validation passed and CI build gate configured
+artifacts:
+  - path: /mnt/data/llm-swarm-refined/llm-swarm
+    purpose: Verified v3 source tree
+    version: 3.0.0
+    verification_evidence: provisioning/verify_release.sh passed with 57 tests
+    provenance: llm-swarm-coding-v2.zip plus complete v3 hardening
+  - path: dist/llm-swarm-production-v3.zip
+    purpose: Deterministic release archive with internal RELEASE-MANIFEST.sha256
+    version: 3.0.0
+    verification_evidence: provisioning/package_release.sh runs the full release gate before packaging
+    provenance: verified v3 source tree
+risks:
+  technical:
+    - Real model quality, memory use, and latency depend on exact models, hardware, repository, and context.
+    - The external test sandbox is an operator integration and must be independently escape-tested.
+    - Container image tags are exact but not pinned by immutable digest in this reference package.
+  safety:
+    - Models and reviewers can agree on an incorrect patch; external CI and human approval remain required.
+  security:
+    - Repository content can contain novel secrets or prompt injection not caught by redaction.
+    - A misconfigured sandbox can expose host, network, or credentials.
+    - Public ingress and egress require organization-specific TLS, identity, and network policy.
+  privacy:
+    - Remote finalization sends selected context and candidate patches to the configured provider.
+    - Durable task state can contain proprietary patches, evidence, and test-output tails.
+  legal:
+    - Model, provider, dependency, and target-repository license obligations remain the operator's responsibility.
+resources:
+  budget: configurable cross-process remote token cap
+  compute: user supplied
+  credentials:
+    - SWARM_API_TOKEN required by default in Compose
+    - optional DEEPSEEK_API_KEY
+    - optional GitHub CLI credentials for draft PR creation
+  repositories:
+    - /mnt/data/llm-swarm-refined/llm-swarm
+decisions:
+  - decision: Keep apply mode disabled and repository mounts read-only by default.
+    alternatives_considered:
+      - Enable direct local tests for convenience.
+      - Mount a Docker socket into the orchestrator.
+    reversal_conditions: Enable only after an operator-controlled external sandbox passes the documented isolation test suite.
+  - decision: Reject executable or redirecting repository-local Git configuration.
+    alternatives_considered:
+      - Trust repository Git config.
+      - Attempt to allow arbitrary filters and hooks in the worktree.
+    reversal_conditions: Add a narrowly scoped, tested allowlist with equivalent command-execution isolation.
+failures:
+  - Local package installation/download restrictions prevented running pinned Ruff in this environment; CI is configured to enforce it.
+  - Docker was unavailable in this environment, so live Compose/container/model smoke tests remain deployment milestones.
+next_milestone:
+  objective: Run the verified package against a disposable target repository on the user's actual model hardware and external test sandbox.
+  rationale: Static and automated source verification is complete; remaining evidence is environment-specific runtime behavior.

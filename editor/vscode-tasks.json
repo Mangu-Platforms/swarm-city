@@ -1,0 +1,91 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Swarm: run coding task",
+      "type": "shell",
+      "command": "${env:SWARM_CLI}",
+      "args": [
+        "task",
+        "${input:swarmTask}",
+        "--language",
+        "${input:swarmLanguage}",
+        "--mode",
+        "${input:swarmMode}"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Swarm: preview context",
+      "type": "shell",
+      "command": "${env:SWARM_CLI}",
+      "args": [
+        "context",
+        "${input:swarmTask}",
+        "--language",
+        "${input:swarmLanguage}"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Swarm: task status",
+      "type": "shell",
+      "command": "${env:SWARM_CLI}",
+      "args": [
+        "status",
+        "${input:taskId}"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "Swarm: model readiness",
+      "type": "shell",
+      "command": "${env:SWARM_CLI}",
+      "args": [
+        "health"
+      ],
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "swarmTask",
+      "type": "promptString",
+      "description": "Concrete coding task and expected outcome"
+    },
+    {
+      "id": "swarmLanguage",
+      "type": "pickString",
+      "description": "Language hint",
+      "options": [
+        "python",
+        "typescript",
+        "javascript",
+        "go",
+        "rust",
+        "java"
+      ],
+      "default": "python"
+    },
+    {
+      "id": "swarmMode",
+      "type": "pickString",
+      "description": "Coding workflow",
+      "options": [
+        "auto",
+        "build",
+        "fix",
+        "refactor",
+        "review",
+        "test",
+        "docs"
+      ],
+      "default": "auto"
+    },
+    {
+      "id": "taskId",
+      "type": "promptString",
+      "description": "Task ID"
+    }
+  ]
+}

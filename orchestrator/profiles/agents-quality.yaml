@@ -1,0 +1,33 @@
+# Quality-first roster for high-memory GPU or unified-memory hosts.
+agents:
+  - role: draft
+    model: ${SWARM_CODER_MODEL:-qwen3-coder:30b}
+    count: ${SWARM_DRAFT_AGENTS:-4}
+    temperature: 0.40
+
+  - role: draft
+    model: ${SWARM_REASONER_MODEL:-gpt-oss:20b}
+    count: ${SWARM_REASONER_DRAFT_AGENTS:-2}
+    temperature: 0.50
+
+  - role: critic
+    model: ${SWARM_REVIEW_MODEL:-qwen3:30b}
+    count: ${SWARM_QUALITY_REVIEWERS:-3}
+    temperature: 0.05
+    weight: 1.4
+
+  - role: security
+    model: ${SWARM_SECURITY_MODEL:-gpt-oss:20b}
+    count: ${SWARM_SECURITY_REVIEWERS:-2}
+    temperature: 0.05
+    weight: 1.6
+
+  - role: test_gen
+    model: ${SWARM_CODER_MODEL:-qwen3-coder:30b}
+    count: ${SWARM_TEST_AGENTS:-2}
+    temperature: 0.10
+
+  - role: finalizer
+    model: ${SWARM_CODER_MODEL:-qwen3-coder:30b}
+    count: 1
+    temperature: 0.05

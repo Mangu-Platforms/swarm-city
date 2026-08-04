@@ -1,0 +1,371 @@
+# Hardened single-node k3s reference for LLM Swarm v3.
+# Before applying:
+#   1. publish the orchestrator image and replace ghcr.io/your-org below;
+#   2. create the required swarm-secrets Secret;
+#   3. populate the swarm-repository PVC with a trusted git checkout;
+#   4. add GPU resources/runtimeClass where appropriate.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: llm-swarm
+  labels:
+    app.kubernetes.io/part-of: llm-swarm
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-models
+  namespace: llm-swarm
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: swarm-data
+  namespace: llm-swarm
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: swarm-repository
+  namespace: llm-swarm
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+  namespace: llm-swarm
+  labels:
+    app.kubernetes.io/name: ollama
+    app.kubernetes.io/part-of: llm-swarm
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ollama
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ollama
+        app.kubernetes.io/part-of: llm-swarm
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: ollama
+          image: ollama/ollama:0.32.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 11434
+              protocol: TCP
+          env:
+            - name: OLLAMA_NUM_PARALLEL
+              value: "3"
+            - name: OLLAMA_MAX_LOADED_MODELS
+              value: "3"
+            - name: OLLAMA_KEEP_ALIVE
+              value: 30m
+          volumeMounts:
+            - name: models
+              mountPath: /root/.ollama
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          livenessProbe:
+            httpGet:
+              path: /api/tags
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/tags
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 10
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+            limits:
+              cpu: "8"
+              memory: 32Gi
+              # Add nvidia.com/gpu: "1" after configuring the NVIDIA runtime.
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: ollama-models
+        - name: tmp
+          emptyDir:
+            sizeLimit: 2Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama
+  namespace: llm-swarm
+  labels:
+    app.kubernetes.io/name: ollama
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ollama
+  ports:
+    - name: http
+      port: 11434
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orchestrator
+  namespace: llm-swarm
+  labels:
+    app.kubernetes.io/name: orchestrator
+    app.kubernetes.io/part-of: llm-swarm
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orchestrator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orchestrator
+        app.kubernetes.io/part-of: llm-swarm
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: /metrics
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: orchestrator
+          image: ghcr.io/your-org/llm-swarm-orchestrator:3.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: OLLAMA_URLS
+              value: http://ollama.llm-swarm.svc.cluster.local:11434
+            - name: AGENTS_CONFIG
+              value: /app/profiles/agents-balanced.yaml
+            - name: REPO_ROOT
+              value: /repo
+            - name: DATA_DIR
+              value: /data
+            - name: TASK_STORE_DIR
+              value: /data/tasks
+            - name: WORKTREE_ROOT
+              value: /data/worktrees
+            - name: GIT_LOCK_FILE
+              value: /data/locks/git-transaction.lock
+            - name: AUTO_CONTEXT
+              value: "true"
+            - name: REDACT_SECRETS
+              value: "true"
+            - name: ENABLE_GIT_APPLY
+              value: "false"
+            - name: OPEN_PR
+              value: "false"
+            - name: REQUIRE_TESTS
+              value: "true"
+            - name: ALLOW_UNSANDBOXED_TESTS
+              value: "false"
+            - name: REQUIRE_HIGH_RISK_APPROVAL
+              value: "true"
+            - name: REQUIRE_SECURITY_REVIEW
+              value: "true"
+            - name: REQUIRE_API_TOKEN
+              value: "true"
+            - name: PROTECT_METRICS
+              value: "false"
+            - name: MAX_ACTIVE_TASKS
+              value: "1"
+            - name: MAX_QUEUED_TASKS
+              value: "20"
+            - name: MAX_CONCURRENT_AGENT_CALLS
+              value: "4"
+            - name: DEEPSEEK_MODEL
+              value: deepseek-v4-pro
+            - name: SWARM_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: swarm-secrets
+                  key: api-token
+                  optional: false
+            - name: DEEPSEEK_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: swarm-secrets
+                  key: deepseek-api-key
+                  optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: repository
+              mountPath: /repo
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "4"
+              memory: 4Gi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: swarm-data
+        - name: repository
+          persistentVolumeClaim:
+            claimName: swarm-repository
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orchestrator
+  namespace: llm-swarm
+  labels:
+    app.kubernetes.io/name: orchestrator
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: orchestrator
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+---
+# Default deny. Add an Ingress/controller-specific policy for remote API access.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: llm-swarm
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ollama-from-orchestrator
+  namespace: llm-swarm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: ollama
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: orchestrator
+      ports:
+        - protocol: TCP
+          port: 11434
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: orchestrator-egress
+  namespace: llm-swarm
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: orchestrator
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ollama
+      ports:
+        - protocol: TCP
+          port: 11434
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+---
+# Create credentials separately; never commit literal values:
+# kubectl -n llm-swarm create secret generic swarm-secrets \
+#   --from-literal=api-token="$(openssl rand -base64 48)" \
+#   --from-literal=deepseek-api-key=''
+#
+# The default policy intentionally blocks public HTTPS egress. Add a narrowly
+# reviewed egress policy before enabling DeepSeek synthesis or GitHub PR creation.

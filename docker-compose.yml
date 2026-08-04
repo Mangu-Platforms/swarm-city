@@ -1,0 +1,210 @@
+# LLM Swarm v3 — localhost-only, fail-closed single-node deployment.
+services:
+  ollama:
+    image: ${OLLAMA_IMAGE:-ollama/ollama:0.32.0}
+    container_name: swarm-ollama
+    init: true
+    volumes:
+      - ollama-models:/root/.ollama
+    environment:
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-3}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-3}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+    ports:
+      - "127.0.0.1:11434:11434"
+    restart: unless-stopped
+    stop_grace_period: 2m
+    pids_limit: 2048
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,size=2g
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "3"
+    # NVIDIA users may enable a device reservation after installing the toolkit.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  orchestrator:
+    build:
+      context: ./orchestrator
+      args:
+        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11.15-slim-bookworm}
+    container_name: swarm-orchestrator
+    init: true
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_URLS: http://ollama:11434
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-30m}
+      OLLAMA_API_KEY: ${OLLAMA_API_KEY:-}
+      AGENTS_CONFIG: /app/profiles/agents-${AGENTS_PROFILE:-balanced}.yaml
+      SWARM_CODER_MODEL: ${SWARM_CODER_MODEL:-}
+      SWARM_REASONER_MODEL: ${SWARM_REASONER_MODEL:-}
+      SWARM_REVIEW_MODEL: ${SWARM_REVIEW_MODEL:-}
+      SWARM_SECURITY_MODEL: ${SWARM_SECURITY_MODEL:-}
+      SWARM_DRAFT_AGENTS: ${SWARM_DRAFT_AGENTS:-}
+      SWARM_REASONER_DRAFT_AGENTS: ${SWARM_REASONER_DRAFT_AGENTS:-}
+      SWARM_QUALITY_REVIEWERS: ${SWARM_QUALITY_REVIEWERS:-}
+      SWARM_SECURITY_REVIEWERS: ${SWARM_SECURITY_REVIEWERS:-}
+      SWARM_TEST_AGENTS: ${SWARM_TEST_AGENTS:-}
+
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-pro}
+      DEEPSEEK_THINKING: ${DEEPSEEK_THINKING:-enabled}
+      DEEPSEEK_REASONING_EFFORT: ${DEEPSEEK_REASONING_EFFORT:-max}
+      DEEPSEEK_MAX_TOKENS: ${DEEPSEEK_MAX_TOKENS:-16384}
+      DEEPSEEK_MONTHLY_TOKEN_BUDGET: ${DEEPSEEK_MONTHLY_TOKEN_BUDGET:-20000000}
+      SKIP_FINALIZE: ${SKIP_FINALIZE:-false}
+      FINALIZER_FALLBACK_LOCAL: ${FINALIZER_FALLBACK_LOCAL:-true}
+
+      N_DRAFT: ${N_DRAFT:-4}
+      M_CRITICS: ${M_CRITICS:-2}
+      TOP_K: ${TOP_K:-2}
+      MAX_CONCURRENT_AGENT_CALLS: ${MAX_CONCURRENT_AGENT_CALLS:-4}
+      MAX_ACTIVE_TASKS: ${MAX_ACTIVE_TASKS:-1}
+      MAX_QUEUED_TASKS: ${MAX_QUEUED_TASKS:-20}
+      TASK_TIMEOUT_S: ${TASK_TIMEOUT_S:-1800}
+      AGENT_TIMEOUT_S: ${AGENT_TIMEOUT_S:-300}
+      LOCAL_MAX_TOKENS: ${LOCAL_MAX_TOKENS:-8192}
+      LOCAL_CONTEXT_TOKENS: ${LOCAL_CONTEXT_TOKENS:-65536}
+
+      MINIMUM_CANDIDATE_SCORE: ${MINIMUM_CANDIDATE_SCORE:-6.5}
+      MINIMUM_CRITIC_REVIEWS: ${MINIMUM_CRITIC_REVIEWS:-2}
+      MINIMUM_SECURITY_REVIEWS: ${MINIMUM_SECURITY_REVIEWS:-1}
+      REQUIRE_SECURITY_REVIEW: ${REQUIRE_SECURITY_REVIEW:-true}
+      FINAL_REVIEW_COUNT: ${FINAL_REVIEW_COUNT:-2}
+      MAX_REPAIR_ROUNDS: ${MAX_REPAIR_ROUNDS:-1}
+
+      AUTO_CONTEXT: ${AUTO_CONTEXT:-true}
+      AUTO_CONTEXT_FILES: ${AUTO_CONTEXT_FILES:-8}
+      MAX_CONTEXT_FILES: ${MAX_CONTEXT_FILES:-16}
+      MAX_CONTEXT_FILE_CHARS: ${MAX_CONTEXT_FILE_CHARS:-20000}
+      MAX_CONTEXT_CHARS: ${MAX_CONTEXT_CHARS:-80000}
+      REDACT_SECRETS: ${REDACT_SECRETS:-true}
+
+      ENABLE_GIT_APPLY: ${ENABLE_GIT_APPLY:-false}
+      OPEN_PR: ${OPEN_PR:-false}
+      PR_DRAFT: ${PR_DRAFT:-true}
+      REQUIRE_TESTS: ${REQUIRE_TESTS:-true}
+      TEST_COMMAND: ${TEST_COMMAND:-}
+      TEST_RUNNER_COMMAND: ${TEST_RUNNER_COMMAND:-}
+      ALLOW_UNSANDBOXED_TESTS: ${ALLOW_UNSANDBOXED_TESTS:-false}
+      REQUIRE_HIGH_RISK_APPROVAL: ${REQUIRE_HIGH_RISK_APPROVAL:-true}
+      REPO_ROOT: /repo
+      WORKTREE_ROOT: /data/worktrees
+      TASK_STORE_DIR: /data/tasks
+      GIT_LOCK_FILE: /data/locks/git-transaction.lock
+
+      REQUIRE_API_TOKEN: ${REQUIRE_API_TOKEN:-true}
+      SWARM_API_TOKEN: ${SWARM_API_TOKEN:-}
+      PROTECT_METRICS: ${PROTECT_METRICS:-false}
+      MAX_REQUEST_BODY_BYTES: ${MAX_REQUEST_BODY_BYTES:-2000000}
+      READINESS_REQUIRE_ALL_MODELS: ${READINESS_REQUIRE_ALL_MODELS:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - swarm-data:/data
+      - gh-config:/home/swarm/.config/gh
+      - ${TARGET_REPO:-./}:/repo:${REPO_MOUNT_MODE:-ro}
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+    stop_grace_period: 45s
+    read_only: true
+    pids_limit: 512
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.12.0}
+    container_name: swarm-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-15d}
+      - --web.enable-lifecycle
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:13.1.0}
+    container_name: swarm-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_COOKIE_SECURE: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  ollama-models:
+  swarm-data:
+  gh-config:
+  prom-data:
+  grafana-data:

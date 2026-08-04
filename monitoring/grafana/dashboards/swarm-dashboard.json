@@ -1,0 +1,247 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": false,
+  "graphTooltip": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Active tasks",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "swarm_active_tasks"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Queued tasks",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 4,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "swarm_queued_tasks"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Queue rejections",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 8,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(swarm_queue_rejections_total)"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Tasks completed",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(swarm_tasks_total{status=\"done\"})"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Tasks failed",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "sum(swarm_tasks_total{status=\"error\"})"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Remote tokens this month",
+      "gridPos": {
+        "h": 5,
+        "w": 4,
+        "x": 20,
+        "y": 0
+      },
+      "targets": [
+        {
+          "expr": "swarm_deepseek_budget_used"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Release-gate outcomes",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(swarm_release_gates_total[10m])) by (status)",
+          "legendFormat": "{{status}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Git transaction outcomes",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(swarm_git_transactions_total[10m])) by (outcome)",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Phase latency p90 (seconds)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 13
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.9, sum(rate(swarm_phase_latency_seconds_bucket[10m])) by (le, phase))",
+          "legendFormat": "{{phase}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Agent failures by role",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 13
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(swarm_agent_failures_total[10m])) by (role)",
+          "legendFormat": "{{role}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Selected context",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "expr": "rate(swarm_context_characters_sum[10m]) / clamp_min(rate(swarm_context_characters_count[10m]), 0.000001)",
+          "legendFormat": "average characters"
+        },
+        {
+          "expr": "rate(swarm_context_files_sum[10m]) / clamp_min(rate(swarm_context_files_count[10m]), 0.000001)",
+          "legendFormat": "average files"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Task latency p90 (seconds)",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.9, sum(rate(swarm_task_duration_seconds_bucket[10m])) by (le))",
+          "legendFormat": "p90"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Patch validation outcomes",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 29
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(swarm_patch_validations_total[10m])) by (outcome)",
+          "legendFormat": "{{outcome}}"
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Finalizer fallbacks",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 29
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(swarm_finalizer_fallbacks_total[10m])) by (reason)",
+          "legendFormat": "{{reason}}"
+        }
+      ]
+    }
+  ],
+  "refresh": "15s",
+  "schemaVersion": 41,
+  "tags": [
+    "llm",
+    "swarm",
+    "coding",
+    "release-gates"
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timezone": "browser",
+  "title": "LLM Swarm Coding v3",
+  "uid": "llm-swarm",
+  "version": 3
+}

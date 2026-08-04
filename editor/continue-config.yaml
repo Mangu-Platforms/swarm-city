@@ -1,0 +1,32 @@
+# Place at ~/.continue/config.yaml and adjust model tags to your hardware.
+name: llm-swarm-coding
+version: 2.0.0
+
+models:
+  - name: Local coding
+    provider: ollama
+    model: qwen2.5-coder:7b
+    apiBase: http://localhost:11434
+    roles: [chat, edit]
+
+  - name: Local review
+    provider: ollama
+    model: llama3.1:8b
+    apiBase: http://localhost:11434
+    roles: [chat]
+
+  - name: Local autocomplete
+    provider: ollama
+    model: qwen2.5-coder:3b
+    apiBase: http://localhost:11434
+    roles: [autocomplete]
+
+  - name: Optional remote finalizer
+    provider: openai
+    model: deepseek-chat
+    apiBase: https://api.deepseek.com
+    apiKey: ${DEEPSEEK_API_KEY}
+    roles: [chat]
+
+# Continue talks directly to individual models. Use tools/swarm.py for the full
+# repository-context, multi-agent review, patch-validation, and git workflow.

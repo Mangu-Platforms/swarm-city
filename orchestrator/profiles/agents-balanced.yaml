@@ -1,0 +1,35 @@
+# Balanced production roster: strong code generation plus model-family diversity.
+agents:
+  - role: draft
+    model: ${SWARM_CODER_MODEL:-qwen3-coder:30b}
+    count: ${SWARM_DRAFT_AGENTS:-3}
+    temperature: 0.45
+    weight: 1.0
+
+  - role: draft
+    model: ${SWARM_REASONER_MODEL:-gpt-oss:20b}
+    count: ${SWARM_REASONER_DRAFT_AGENTS:-1}
+    temperature: 0.55
+    weight: 1.0
+
+  - role: critic
+    model: ${SWARM_REVIEW_MODEL:-qwen3:14b}
+    count: ${SWARM_QUALITY_REVIEWERS:-2}
+    temperature: 0.05
+    weight: 1.25
+
+  - role: security
+    model: ${SWARM_SECURITY_MODEL:-gpt-oss:20b}
+    count: ${SWARM_SECURITY_REVIEWERS:-1}
+    temperature: 0.05
+    weight: 1.5
+
+  - role: test_gen
+    model: ${SWARM_CODER_MODEL:-qwen3-coder:30b}
+    count: ${SWARM_TEST_AGENTS:-1}
+    temperature: 0.15
+
+  - role: finalizer
+    model: ${SWARM_CODER_MODEL:-qwen3-coder:30b}
+    count: 1
+    temperature: 0.10
