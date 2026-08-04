@@ -1,0 +1,34 @@
+name: Feature request
+description: Propose a capability or a change to how the swarm behaves
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you are trying to do that the system makes hard today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: safety
+    attributes:
+      label: Effect on the safety posture
+      description: >
+        Does this change what can reach a repository, what runs generated code,
+        what a `ready` release gate means, or what the system does when a
+        component is unavailable? If it does not, say so.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

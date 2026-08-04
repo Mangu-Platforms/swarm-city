@@ -313,8 +313,11 @@ def _normalize_patch_path(raw_path: str, *, strip_prefix: str = "") -> str | Non
     if not cleaned or cleaned == "/dev/null" or cleaned.startswith("/"):
         return None
     path = PurePosixPath(cleaned)
-    if ".." in path.parts or ".git" in path.parts or any(
-        part in {"", "."} for part in path.parts
+    if (
+        ".." in path.parts
+        or any(part.lower() == ".git" for part in path.parts)
+        or any(part in {"", "."} for part in path.parts)
+        or any(len(part.encode("utf-8")) > 255 for part in path.parts)
     ):
         return None
     return path.as_posix()

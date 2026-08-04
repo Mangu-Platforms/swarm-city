@@ -17,6 +17,14 @@ _LOCAL_LOCKS: dict[str, threading.Lock] = {}
 _LOCAL_LOCKS_GUARD = threading.Lock()
 
 
+class LockTimeout(TimeoutError):
+    """Raised when a lock could not be acquired within its deadline.
+
+    Distinct from a task or command deadline so callers can report lock
+    contention as contention rather than as a generic timeout.
+    """
+
+
 def _local_lock(path: Path) -> threading.Lock:
     key = str(path.resolve())
     with _LOCAL_LOCKS_GUARD:
@@ -25,13 +33,18 @@ def _local_lock(path: Path) -> threading.Lock:
 
 @contextmanager
 def file_lock(path: str | Path, timeout_s: float = 60.0) -> Iterator[None]:
-    """Acquire an exclusive process and cross-process lock with a deadline."""
+    """Acquire an exclusive process and cross-process lock with a deadline.
+
+    `timeout_s` bounds the total wait. The in-process and cross-process waits
+    share one deadline rather than each getting the full budget.
+    """
 
     lock_path = Path(path).expanduser()
     lock_path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + max(0.0, timeout_s)
     local = _local_lock(lock_path)
-    if not local.acquire(timeout=max(0.0, timeout_s)):
-        raise TimeoutError(f"timed out acquiring lock: {lock_path}")
+    if not local.acquire(timeout=max(0.0, deadline - time.monotonic())):
+        raise LockTimeout(f"timed out acquiring lock: {lock_path}")
 
     descriptor: int | None = None
     try:
@@ -42,16 +55,15 @@ def file_lock(path: str | Path, timeout_s: float = 60.0) -> Iterator[None]:
             pass
 
         if fcntl is not None:
-            deadline = time.monotonic() + max(0.0, timeout_s)
             while True:
                 try:
                     fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     break
-                except BlockingIOError:
+                except BlockingIOError as exc:
                     if time.monotonic() >= deadline:
-                        raise TimeoutError(
+                        raise LockTimeout(
                             f"timed out acquiring lock: {lock_path}"
-                        )
+                        ) from exc
                     time.sleep(0.05)
         yield
     finally:

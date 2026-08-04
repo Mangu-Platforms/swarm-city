@@ -138,3 +138,93 @@ def test_context_respects_character_budget(monkeypatch, tmp_path: Path) -> None:
     assert bundle.total_chars == 20
     assert bundle.files["large.py"] == "x" * 20
     assert any("truncated" in warning for warning in bundle.warnings)
+
+
+def test_private_key_is_redacted_even_when_its_end_marker_is_truncated(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Reading a bounded prefix must not strip the terminator off a live key."""
+
+    monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    get_settings.cache_clear()
+    settings = get_settings()
+    body = "MIIEowIBAAKCAQEAsecretkeymaterial\n" * (
+        settings.max_context_file_chars // 8
+    )
+    (tmp_path / "backup_key.txt").write_text(
+        f"-----BEGIN RSA PRIVATE KEY-----\n{body}-----END RSA PRIVATE KEY-----\n",
+        encoding="utf-8",
+    )
+
+    bundle = RepositoryContextBuilder(tmp_path, settings).build(
+        "review the backup key handling",
+        context_paths=["backup_key.txt"],
+    )
+
+    assert bundle.redactions >= 1
+    assert "secretkeymaterial" not in bundle.files["backup_key.txt"]
+    assert "BEGIN RSA PRIVATE KEY" not in bundle.files["backup_key.txt"]
+
+
+def test_redaction_covers_json_yaml_url_and_vendor_token_formats() -> None:
+    content = "\n".join(
+        [
+            '{"password": "Pr0d-DB-Passw0rd!", "api_key": "sk_live_51H8xABCDEFGHIJKL"}',
+            "db:",
+            "  password: s3cr3tvalue",
+            'url = "postgres://svc:MailerPass123@db.internal:5432/app"',
+            'slack = "xoxb-1234567890-ABCDEFGHIJK"',
+            "google = AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456",
+            "Authorization: Basic dXNlcjpwYXNzd29yZDEyMw==",
+        ]
+    )
+
+    redacted, count = RepositoryContextBuilder._redact(content)
+
+    assert count >= 7
+    for secret in (
+        "Pr0d-DB-Passw0rd",
+        "sk_live_51H8x",
+        "s3cr3tvalue",
+        "MailerPass123",
+        "xoxb-1234567890",
+        "AIzaSyABCDEFGHIJKLMNOPQRSTUVWXYZ0123456",
+        "dXNlcjpwYXNzd29yZDEyMw",
+    ):
+        assert secret not in redacted
+
+
+def test_context_file_budget_is_measured_in_characters_not_bytes(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """Multi-byte source must get the documented budget, uncorrupted."""
+
+    monkeypatch.setenv("REPO_ROOT", str(tmp_path))
+    get_settings.cache_clear()
+    settings = get_settings()
+    (tmp_path / "cjk.py").write_text(
+        "# " + "漢" * (settings.max_context_file_chars * 2),
+        encoding="utf-8",
+    )
+
+    bundle = RepositoryContextBuilder(tmp_path, settings).build(
+        "review the cjk module",
+        context_paths=["cjk.py"],
+    )
+
+    selected = bundle.files["cjk.py"]
+    assert len(selected) == settings.max_context_file_chars
+    assert "�" not in selected
+
+
+def test_unsafe_paths_are_refused_without_raising(tmp_path: Path) -> None:
+    """_safe_absolute promises None for unsafe input; it must never raise."""
+
+    builder = RepositoryContextBuilder(tmp_path, get_settings())
+
+    assert builder._safe_absolute("a" * 4096) is None
+    assert builder._safe_absolute("../etc/passwd") is None
+    assert builder._safe_absolute(".git/config") is None
+    assert builder._safe_absolute(".GIT/config") is None

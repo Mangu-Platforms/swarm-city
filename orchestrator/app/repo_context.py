@@ -176,26 +176,55 @@ STOP_WORDS = {
     "with",
 }
 
+_SECRET_KEYWORDS = (
+    r"api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|"
+    r"password|passwd|private[_-]?key|secret|token"
+)
 _PRIVATE_KEY_RE = re.compile(
     r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
     flags=re.DOTALL,
 )
+# A key whose END marker fell outside the read bound must still be redacted;
+# without this, truncation alone would hand the model raw key material.
+_UNTERMINATED_PRIVATE_KEY_RE = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*",
+    flags=re.DOTALL,
+)
+# An identifier that contains a secret keyword: `API_TOKEN`, `db_password`,
+# `stripe.secret`. Matching the surrounding identifier characters rather than a
+# word boundary is deliberate — `\btoken\b` never matches inside `API_TOKEN`,
+# because `_` is a word character. Over-redaction is the safe direction here.
+_SECRET_IDENTIFIER = rf"[A-Za-z0-9_.-]*(?:{_SECRET_KEYWORDS})[A-Za-z0-9_.-]*"
+# Matches `key: "value"`, `key = 'value'`, and the JSON form `"key": "value"`,
+# where the closing quote of the key sits between the keyword and the separator.
 _QUOTED_SECRET_RE = re.compile(
-    r"(?im)(\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|"
-    r"password|passwd|private[_-]?key|secret|token)\b\s*[:=]\s*)([\"'])"
+    rf"(?im)({_SECRET_IDENTIFIER}[\"']?[ \t]*[:=][ \t]*)([\"'])"
     r"([^\"'\n]{4,})([\"'])"
 )
-_ENV_SECRET_RE = re.compile(
-    r"(?im)^([A-Z0-9_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|PASSWD|PRIVATE_KEY)"
-    r"[A-Z0-9_]*\s*=\s*)([^\s#][^\n]*)$"
+# Unquoted `KEY=value`, `key: value`, and `key = value`, at any indentation.
+# The value may not start with a quote, so a value already handled by
+# _QUOTED_SECRET_RE is not matched (and counted) a second time.
+_BARE_SECRET_RE = re.compile(
+    rf"(?im)^([ \t]*[\"']?{_SECRET_IDENTIFIER}[\"']?[ \t]*[:=][ \t]*)"
+    r"([^\s#\"'][^\n]*)$"
+)
+_URL_CREDENTIALS_RE = re.compile(
+    r"(?i)\b([a-z][a-z0-9+.-]*://)([^\s:/@]+):([^\s/@]+)@"
 )
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{12,}=*")
+_BASIC_AUTH_RE = re.compile(r"(?i)\bBasic\s+[A-Za-z0-9+/]{16,}={0,2}")
 _TOKEN_PATTERNS = [
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"),
     re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b"),
+    re.compile(r"\b[sr]k_(?:live|test)_[A-Za-z0-9]{16,}\b"),
+    re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b"),
+    re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\bnpm_[A-Za-z0-9]{36}\b"),
+    re.compile(r"\bSG\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\b"),
 ]
 
 
@@ -429,8 +458,14 @@ class RepositoryContextBuilder:
         if absolute is None or not absolute.is_file():
             bundle.warnings.append(f"ignored unsafe repository path: {relative}")
             return
+        # Read in characters, not bytes: a UTF-8 code point is up to four bytes,
+        # so a byte-sized read silently delivers a fraction of the configured
+        # budget for non-ASCII source and can split a code point at the boundary.
+        # The whole read is redacted before truncation, because a credential
+        # straddling the cut would otherwise survive with its terminator removed.
+        byte_budget = self.settings.max_context_file_chars * 4 + 4
         try:
-            data = absolute.read_bytes()[: self.settings.max_context_file_chars + 1]
+            data = absolute.read_bytes()[:byte_budget]
         except OSError as exc:
             bundle.warnings.append(f"could not read {relative}: {exc}")
             return
@@ -490,12 +525,18 @@ class RepositoryContextBuilder:
             count += matches
 
         substitute(_PRIVATE_KEY_RE, "[REDACTED PRIVATE KEY]")
+        substitute(_UNTERMINATED_PRIVATE_KEY_RE, "[REDACTED PRIVATE KEY]")
         substitute(
             _QUOTED_SECRET_RE,
             lambda match: f"{match.group(1)}{match.group(2)}[REDACTED]{match.group(4)}",
         )
-        substitute(_ENV_SECRET_RE, lambda match: f"{match.group(1)}[REDACTED]")
+        substitute(_BARE_SECRET_RE, lambda match: f"{match.group(1)}[REDACTED]")
+        substitute(
+            _URL_CREDENTIALS_RE,
+            lambda match: f"{match.group(1)}{match.group(2)}:[REDACTED]@",
+        )
         substitute(_BEARER_RE, "Bearer [REDACTED]")
+        substitute(_BASIC_AUTH_RE, "Basic [REDACTED]")
         for pattern in _TOKEN_PATTERNS:
             substitute(pattern, "[REDACTED TOKEN]")
         return content, count
@@ -557,7 +598,7 @@ class RepositoryContextBuilder:
         if normalized is None:
             return False
         path = Path(normalized)
-        if any(part in IGNORED_DIRECTORIES for part in path.parts):
+        if any(part.lower() in IGNORED_DIRECTORIES for part in path.parts):
             return False
         if self._is_sensitive(path) or path.suffix.lower() in BINARY_SUFFIXES:
             return False
@@ -578,12 +619,14 @@ class RepositoryContextBuilder:
             return None
         if normalized == ".":
             return self.root
-        path = self.root
-        for part in PurePosixPath(normalized).parts:
-            path = path / part
-            if path.is_symlink():
-                return None
+        # Never raises: callers treat None as "unsafe", and a caller-supplied
+        # path can make pathlib raise (ENAMETOOLONG, ELOOP) rather than return.
         try:
+            path = self.root
+            for part in PurePosixPath(normalized).parts:
+                path = path / part
+                if path.is_symlink():
+                    return None
             path.resolve(strict=False).relative_to(self.root)
         except (OSError, ValueError):
             return None
@@ -613,8 +656,14 @@ class RepositoryContextBuilder:
         if not cleaned or cleaned.startswith("/"):
             return None
         path = PurePosixPath(cleaned)
-        if ".." in path.parts or ".git" in path.parts or any(
-            part in {"", "."} for part in path.parts
+        # Case-fold the .git guard: on a case-insensitive filesystem (APFS,
+        # NTFS) `.GIT/config` reaches the real git config, which routinely
+        # carries credentials in `remote.origin.url`.
+        if (
+            ".." in path.parts
+            or any(part.lower() == ".git" for part in path.parts)
+            or any(part in {"", "."} for part in path.parts)
+            or any(len(part.encode("utf-8")) > 255 for part in path.parts)
         ):
             return None
         return path.as_posix()
