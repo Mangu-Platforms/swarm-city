@@ -62,6 +62,9 @@ else
 fi
 
 if [[ ! -f .env ]]; then
+  # Create the file private from the start. chmod after writing leaves the
+  # generated API token and Grafana password world-readable in the interval.
+  umask 077
   cp .env.example .env
   PROFILE="${PROFILE}" python3 - <<'PY'
 from pathlib import Path

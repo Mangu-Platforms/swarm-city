@@ -15,6 +15,11 @@ services:
     restart: unless-stopped
     stop_grace_period: 2m
     pids_limit: 2048
+    # 0 means unlimited, which is the safe default here: too low a ceiling
+    # breaks model loading outright. Set this on a shared or desktop host —
+    # a 30B model in the quality profile will otherwise take the machine down
+    # with it rather than being OOM-killed inside the container.
+    mem_limit: ${OLLAMA_MEM_LIMIT:-0}
     tmpfs:
       - /tmp:rw,nosuid,nodev,size=2g
     security_opt:
@@ -136,6 +141,7 @@ services:
     stop_grace_period: 45s
     read_only: true
     pids_limit: 512
+    mem_limit: ${ORCHESTRATOR_MEM_LIMIT:-0}
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=256m
     cap_drop:
