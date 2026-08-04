@@ -581,6 +581,7 @@ def apply_patch_and_pr(
     result["branch"] = branch
 
     branch_created = False
+    branch_pushed = False
     transaction_succeeded = False
     try:
         with file_lock(settings.git_lock_file, settings.git_lock_timeout_s):
@@ -655,9 +656,27 @@ def apply_patch_and_pr(
                     ),
                     "git apply failed",
                 )
+                # Stage before reconciliation and before tests. `git diff` alone
+                # cannot see files the patch creates, and staging first means the
+                # commit carries the reviewed patch rather than whatever the test
+                # run happens to leave behind in the worktree.
                 _require(
                     _run_git(
-                        ["diff", "--no-ext-diff", "--no-textconv", "--check"],
+                        ["add", "-A"],
+                        worktree,
+                        timeout=_remaining(deadline, 60),
+                    ),
+                    "git add failed",
+                )
+                _require(
+                    _run_git(
+                        [
+                            "diff",
+                            "--cached",
+                            "--no-ext-diff",
+                            "--no-textconv",
+                            "--check",
+                        ],
                         worktree,
                         timeout=_remaining(deadline, 60),
                     ),
@@ -668,9 +687,11 @@ def apply_patch_and_pr(
                     _run_git(
                         [
                             "diff",
+                            "--cached",
                             "--no-ext-diff",
                             "--no-textconv",
                             "--name-only",
+                            head,
                             "--",
                         ],
                         worktree,
@@ -684,11 +705,24 @@ def apply_patch_and_pr(
                     if line.strip()
                 }
                 validated_paths = set(validation.paths)
-                if not changed_paths or not changed_paths.issubset(validated_paths):
+                unexpected = sorted(changed_paths - validated_paths)
+                if unexpected:
                     raise GitTransactionAbort(
                         "applied paths fall outside the validated patch paths: "
                         f"validated {sorted(validated_paths)}, "
-                        f"got {sorted(changed_paths)}"
+                        f"unexpected {unexpected}"
+                    )
+                unstaged = sorted(validated_paths - changed_paths)
+                if unstaged:
+                    raise GitTransactionAbort(
+                        "validated patch paths were not staged, so the commit would "
+                        "not match the reviewed patch (a .gitignore rule or a "
+                        "net-zero change is the usual cause): "
+                        f"missing {unstaged}"
+                    )
+                if not changed_paths:
+                    raise GitTransactionAbort(
+                        "patch produced no staged repository changes"
                     )
 
                 test_command = _detect_test_command(worktree, settings)
@@ -732,14 +766,27 @@ def apply_patch_and_pr(
                     if tests.returncode != 0:
                         raise GitTransactionAbort("tests failed; no commit was created")
 
-                _require(
-                    _run_git(
-                        ["add", "-A"],
-                        worktree,
-                        timeout=_remaining(deadline, 60),
-                    ),
-                    "git add failed",
+                # The index was staged before the tests ran, so the commit below
+                # carries exactly the reviewed patch. Anything the test run wrote
+                # into the worktree stays untracked and is discarded with it.
+                dirty = _run_git(
+                    [
+                        "diff",
+                        "--no-ext-diff",
+                        "--no-textconv",
+                        "--name-only",
+                        "--",
+                    ],
+                    worktree,
+                    timeout=_remaining(deadline, 30),
                 )
+                if dirty.returncode == 0 and dirty.stdout.strip():
+                    result["warnings"].append(
+                        "the test run modified tracked files; those modifications "
+                        "were discarded and only the reviewed patch was committed: "
+                        f"{sorted(line.strip() for line in dirty.stdout.splitlines() if line.strip())}"
+                    )
+
                 staged = _run_git(
                     [
                         "diff",
@@ -793,6 +840,7 @@ def apply_patch_and_pr(
                         ),
                         "git push failed",
                     )
+                    branch_pushed = True
                     pr_command = [
                         "gh",
                         "pr",
@@ -830,6 +878,13 @@ def apply_patch_and_pr(
                     if deleted.returncode != 0:
                         result["warnings"].append(
                             f"could not delete failed branch: {_output_tail(deleted)}"
+                        )
+                    if branch_pushed:
+                        result["warnings"].append(
+                            f"branch {branch} was pushed to origin before the "
+                            "transaction failed; the local branch was deleted but "
+                            "the remote branch still exists and must be removed "
+                            "manually"
                         )
                 shutil.rmtree(worktree, ignore_errors=True)
     except (GitTransactionAbort, TimeoutError) as exc:

@@ -110,6 +110,11 @@ def extract_diff(output: str) -> str | None:
     if not match:
         return None
     candidate = output[match.start() :].strip("\r\n")
+    # An unterminated or stray code fence would otherwise survive into the diff
+    # and reach `git apply` as trailing garbage.
+    fence = re.search(r"(?m)^[ \t]*(?:```|~~~)", candidate)
+    if fence:
+        candidate = candidate[: fence.start()].rstrip()
     for marker in ("\nSUMMARY:", "\nRATIONALE:", "\nNOTES:", "\nEXPLANATION:"):
         marker_index = candidate.find(marker)
         if marker_index >= 0:

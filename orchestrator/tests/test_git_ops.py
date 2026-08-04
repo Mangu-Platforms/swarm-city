@@ -31,6 +31,19 @@ SUMMARY: dependency update
 """
 
 
+NEW_FILE_PATCH = """```diff
+diff --git a/tests/test_regression.py b/tests/test_regression.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_regression.py
+@@ -0,0 +1,2 @@
++def test_regression():
++    assert True
+```
+SUMMARY: add a regression test
+"""
+
+
 def run(repo: Path, *command: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         list(command),
@@ -168,6 +181,75 @@ def test_repository_commit_hooks_are_neutralized(monkeypatch, tmp_path: Path) ->
 
     assert result["applied"] is True
     assert not marker.exists()
+
+
+def test_patch_that_only_creates_files_is_applied_and_committed(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """`git diff` cannot see files a patch creates; reconciliation must stage first."""
+
+    _, head = init_repo(tmp_path)
+    configure_git_test(
+        monkeypatch,
+        tmp_path,
+        "python -c \"from pathlib import Path; "
+        "assert Path('tests/test_regression.py').is_file()\"",
+    )
+
+    result = apply_patch_and_pr(NEW_FILE_PATCH, "add coverage", expected_head=head)
+
+    assert result["applied"] is True, result["errors"]
+    assert result["paths"] == ["tests/test_regression.py"]
+    committed = run(
+        tmp_path,
+        "git",
+        "show",
+        f"{result['branch']}:tests/test_regression.py",
+    ).stdout
+    assert "def test_regression():" in committed
+
+
+def test_test_run_side_effects_are_not_committed(monkeypatch, tmp_path: Path) -> None:
+    """Only the reviewed patch is committed, never artifacts the tests leave behind."""
+
+    _, head = init_repo(tmp_path)
+    configure_git_test(
+        monkeypatch,
+        tmp_path,
+        "python -c \"from pathlib import Path; "
+        "Path('artifact.log').write_text('leaked'); "
+        "Path('app.py').write_text('tampered\\n')\"",
+    )
+
+    result = apply_patch_and_pr(PATCH, "replace old behavior", expected_head=head)
+
+    assert result["applied"] is True, result["errors"]
+    tree = run(tmp_path, "git", "ls-tree", "-r", "--name-only", result["branch"]).stdout
+    assert "artifact.log" not in tree
+    assert run(tmp_path, "git", "show", f"{result['branch']}:app.py").stdout == "new\n"
+    assert any("modified tracked files" in warning for warning in result["warnings"])
+
+
+def test_patch_paths_hidden_by_gitignore_are_rejected(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A patch whose changes cannot be staged must fail closed, not commit partially."""
+
+    init_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text("tests/\n", encoding="utf-8")
+    run(tmp_path, "git", "add", ".gitignore")
+    run(tmp_path, "git", "commit", "-m", "ignore tests")
+    head = run(tmp_path, "git", "rev-parse", "HEAD").stdout.strip()
+    configure_git_test(monkeypatch, tmp_path, "true")
+
+    result = apply_patch_and_pr(NEW_FILE_PATCH, "add coverage", expected_head=head)
+
+    assert result["applied"] is False
+    assert any("were not staged" in error for error in result["errors"])
+    branches = run(tmp_path, "git", "branch", "--format=%(refname:short)").stdout
+    assert result["branch"] not in branches
 
 
 def test_unsafe_origin_scheme_is_rejected_before_mutation(

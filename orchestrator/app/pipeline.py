@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import logging
 import random
+import re
 import time
 from collections import defaultdict
 from contextlib import contextmanager
@@ -89,10 +90,9 @@ class Pipeline:
                 context_paths=task.get("context_paths", []),
                 auto_context=task.get("auto_context"),
             )
-        expected_head = task.get("expected_head")
-        if expected_head and bundle.git_commit and not bundle.git_commit.startswith(
-            expected_head
-        ):
+        expected_head = _normalize_expected_head(task.get("expected_head"))
+        if expected_head and bundle.git_commit and not bundle.git_commit.lower(
+        ).startswith(expected_head):
             raise RuntimeError(
                 f"stale repository base: expected {expected_head}, "
                 f"current HEAD is {bundle.git_commit}"
@@ -218,8 +218,7 @@ class Pipeline:
                     result["git"] = await run_git_transaction(
                         final_output,
                         task["task"],
-                        expected_head=task.get("expected_head")
-                        or bundle.git_commit,
+                        expected_head=expected_head or bundle.git_commit,
                         allow_high_risk_paths=bool(
                             task.get("allow_high_risk_paths")
                         ),
@@ -486,15 +485,19 @@ class Pipeline:
                     )
 
             accepted: list[str] = []
+            pruned = 0
             for part in parts:
                 candidate = "\n\n".join([*accepted, part])
                 prompt = prompts.finalize_user_prompt(task, candidate)
                 if len(prompt) > self.settings.max_agent_input_chars:
-                    result["warnings"].append(
-                        "synthesis evidence was pruned to fit MAX_AGENT_INPUT_CHARS"
-                    )
+                    pruned += 1
                     continue
                 accepted.append(part)
+            if pruned:
+                result["warnings"].append(
+                    f"{pruned} synthesis evidence block(s) were pruned to fit "
+                    "MAX_AGENT_INPUT_CHARS"
+                )
             result["synthesis_evidence_blocks"] = len(accepted)
             return "\n\n".join(accepted)
 
@@ -982,6 +985,23 @@ class Pipeline:
 
 def _enum_value(value: object) -> str:
     return str(getattr(value, "value", value))
+
+
+def _normalize_expected_head(value: object) -> str | None:
+    """Normalize a caller-supplied stale-base guard, rejecting junk outright.
+
+    The API layer already enforces this shape. Repeating it here keeps direct
+    pipeline callers from silently disabling the guard with a malformed value.
+    """
+
+    if not value:
+        return None
+    normalized = str(value).strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{7,64}", normalized):
+        raise RuntimeError(
+            "expected_head must be a 7-64 character hexadecimal commit id"
+        )
+    return normalized
 
 
 def _score_payload(score: DraftScore) -> dict:

@@ -123,3 +123,23 @@ def test_validate_rejects_mismatched_headers_duplicates_and_size_limits(
     assert not limited.valid
     assert any("adds 1 lines" in error for error in limited.errors)
     assert any("deletes 1 lines" in error for error in limited.errors)
+
+
+def test_extract_strips_stray_and_unterminated_code_fences() -> None:
+    """A fence that survives extraction reaches `git apply` as trailing garbage."""
+
+    body = """diff --git a/app.py b/app.py
+--- a/app.py
++++ b/app.py
+@@ -1 +1 @@
+-a
++b
+"""
+    unterminated = f"Here is the patch:\n```diff\n{body}"
+    stray = f"Here is the patch:\n{body}```\n"
+
+    for output in (unterminated, stray):
+        diff = extract_diff(output)
+        assert diff is not None
+        assert "```" not in diff
+        assert diff.endswith("+b\n")
