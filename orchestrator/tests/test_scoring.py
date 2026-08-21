@@ -1,4 +1,5 @@
 """Defensive scoring and release eligibility tests."""
+
 from __future__ import annotations
 
 from app.models import CriticReview

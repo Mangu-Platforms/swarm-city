@@ -1,4 +1,5 @@
 """Shared test configuration."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -18,6 +19,9 @@ def isolated_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     monkeypatch.setenv("DEEPSEEK_BUDGET_FILE", str(state_root / "budget.json"))
     monkeypatch.setenv("REPO_ROOT", str(tmp_path))
     monkeypatch.setenv("AGENTS_CONFIG", str(Path(__file__).parents[1] / "agents.yaml"))
+    # Authentication is required by default, so every test that builds Settings
+    # needs a token. Tests that exercise the auth dependency override both.
+    monkeypatch.setenv("SWARM_API_TOKEN", "test-swarm-token")
     monkeypatch.setenv("SKIP_FINALIZE", "true")
     monkeypatch.setenv("N_DRAFT", "2")
     monkeypatch.setenv("M_CRITICS", "1")

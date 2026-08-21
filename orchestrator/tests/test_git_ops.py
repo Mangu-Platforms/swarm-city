@@ -1,4 +1,5 @@
 """Isolated git worktree transaction integration tests."""
+
 from __future__ import annotations
 
 import subprocess
@@ -28,6 +29,19 @@ diff --git a/requirements.txt b/requirements.txt
 +new-package==2
 ```
 SUMMARY: dependency update
+"""
+
+
+NEW_FILE_PATCH = """```diff
+diff --git a/tests/test_regression.py b/tests/test_regression.py
+new file mode 100644
+--- /dev/null
++++ b/tests/test_regression.py
+@@ -0,0 +1,2 @@
++def test_regression():
++    assert True
+```
+SUMMARY: add a regression test
 """
 
 
@@ -69,7 +83,7 @@ def test_apply_patch_runs_tests_commits_and_preserves_active_checkout(
     configure_git_test(
         monkeypatch,
         tmp_path,
-        "python -c \"from pathlib import Path; "
+        'python -c "from pathlib import Path; '
         "assert Path('app.py').read_text() == 'new\\n'\"",
     )
 
@@ -79,7 +93,10 @@ def test_apply_patch_runs_tests_commits_and_preserves_active_checkout(
     assert result["worktree_isolated"] is True
     assert result["commit"]
     assert result["tests_rc"] == 0
-    assert run(tmp_path, "git", "branch", "--show-current").stdout.strip() == original_branch
+    assert (
+        run(tmp_path, "git", "branch", "--show-current").stdout.strip()
+        == original_branch
+    )
     assert run(tmp_path, "git", "rev-parse", "HEAD").stdout.strip() == head
     assert (tmp_path / "app.py").read_text(encoding="utf-8") == "old\n"
     branch_content = run(tmp_path, "git", "show", f"{result['branch']}:app.py").stdout
@@ -94,13 +111,18 @@ def test_failed_tests_roll_back_and_delete_branch(monkeypatch, tmp_path: Path) -
 
     assert result["applied"] is False
     assert any("tests failed" in error for error in result["errors"])
-    assert run(tmp_path, "git", "branch", "--show-current").stdout.strip() == original_branch
+    assert (
+        run(tmp_path, "git", "branch", "--show-current").stdout.strip()
+        == original_branch
+    )
     assert (tmp_path / "app.py").read_text(encoding="utf-8") == "old\n"
     branches = run(tmp_path, "git", "branch", "--format=%(refname:short)").stdout
     assert result["branch"] not in branches
 
 
-def test_stale_head_and_dirty_checkout_are_rejected(monkeypatch, tmp_path: Path) -> None:
+def test_stale_head_and_dirty_checkout_are_rejected(
+    monkeypatch, tmp_path: Path
+) -> None:
     _, head = init_repo(tmp_path)
     configure_git_test(monkeypatch, tmp_path, "true")
 
@@ -114,7 +136,9 @@ def test_stale_head_and_dirty_checkout_are_rejected(monkeypatch, tmp_path: Path)
     assert any("uncommitted" in error for error in dirty["errors"])
 
 
-def test_high_risk_patch_requires_explicit_approval(monkeypatch, tmp_path: Path) -> None:
+def test_high_risk_patch_requires_explicit_approval(
+    monkeypatch, tmp_path: Path
+) -> None:
     init_repo(tmp_path)
     configure_git_test(monkeypatch, tmp_path, "true")
 
@@ -168,6 +192,75 @@ def test_repository_commit_hooks_are_neutralized(monkeypatch, tmp_path: Path) ->
 
     assert result["applied"] is True
     assert not marker.exists()
+
+
+def test_patch_that_only_creates_files_is_applied_and_committed(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """`git diff` cannot see files a patch creates; reconciliation must stage first."""
+
+    _, head = init_repo(tmp_path)
+    configure_git_test(
+        monkeypatch,
+        tmp_path,
+        'python -c "from pathlib import Path; '
+        "assert Path('tests/test_regression.py').is_file()\"",
+    )
+
+    result = apply_patch_and_pr(NEW_FILE_PATCH, "add coverage", expected_head=head)
+
+    assert result["applied"] is True, result["errors"]
+    assert result["paths"] == ["tests/test_regression.py"]
+    committed = run(
+        tmp_path,
+        "git",
+        "show",
+        f"{result['branch']}:tests/test_regression.py",
+    ).stdout
+    assert "def test_regression():" in committed
+
+
+def test_test_run_side_effects_are_not_committed(monkeypatch, tmp_path: Path) -> None:
+    """Only the reviewed patch is committed, never artifacts the tests leave behind."""
+
+    _, head = init_repo(tmp_path)
+    configure_git_test(
+        monkeypatch,
+        tmp_path,
+        'python -c "from pathlib import Path; '
+        "Path('artifact.log').write_text('leaked'); "
+        "Path('app.py').write_text('tampered\\n')\"",
+    )
+
+    result = apply_patch_and_pr(PATCH, "replace old behavior", expected_head=head)
+
+    assert result["applied"] is True, result["errors"]
+    tree = run(tmp_path, "git", "ls-tree", "-r", "--name-only", result["branch"]).stdout
+    assert "artifact.log" not in tree
+    assert run(tmp_path, "git", "show", f"{result['branch']}:app.py").stdout == "new\n"
+    assert any("modified tracked files" in warning for warning in result["warnings"])
+
+
+def test_patch_paths_hidden_by_gitignore_are_rejected(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    """A patch whose changes cannot be staged must fail closed, not commit partially."""
+
+    init_repo(tmp_path)
+    (tmp_path / ".gitignore").write_text("tests/\n", encoding="utf-8")
+    run(tmp_path, "git", "add", ".gitignore")
+    run(tmp_path, "git", "commit", "-m", "ignore tests")
+    head = run(tmp_path, "git", "rev-parse", "HEAD").stdout.strip()
+    configure_git_test(monkeypatch, tmp_path, "true")
+
+    result = apply_patch_and_pr(NEW_FILE_PATCH, "add coverage", expected_head=head)
+
+    assert result["applied"] is False
+    assert any("were not staged" in error for error in result["errors"])
+    branches = run(tmp_path, "git", "branch", "--format=%(refname:short)").stdout
+    assert result["branch"] not in branches
 
 
 def test_unsafe_origin_scheme_is_rejected_before_mutation(

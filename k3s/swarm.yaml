@@ -68,6 +68,12 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: 120
       securityContext:
+        # The orchestrator pod already runs unprivileged; Ollama must too, so a
+        # container-escape primitive does not start from uid 0.
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
       containers:
@@ -79,6 +85,8 @@ spec:
               containerPort: 11434
               protocol: TCP
           env:
+            - name: HOME
+              value: /home/ollama
             - name: OLLAMA_NUM_PARALLEL
               value: "3"
             - name: OLLAMA_MAX_LOADED_MODELS
@@ -87,7 +95,7 @@ spec:
               value: 30m
           volumeMounts:
             - name: models
-              mountPath: /root/.ollama
+              mountPath: /home/ollama/.ollama
             - name: tmp
               mountPath: /tmp
           securityContext:

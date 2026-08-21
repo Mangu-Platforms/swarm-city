@@ -1,7 +1,10 @@
 """End-to-end swarm orchestration tests without model servers."""
+
 from __future__ import annotations
 
 import json
+
+from app import prompts
 from pathlib import Path
 
 import pytest
@@ -38,15 +41,11 @@ class FakeRegistry:
             Agent("draft-1", "draft", "coder-a", "http://unused"),
             Agent("draft-2", "draft", "coder-b", "http://unused"),
         ]
-        self._quality = [
-            Agent("critic-1", "critic", "reviewer", "http://unused")
-        ]
+        self._quality = [Agent("critic-1", "critic", "reviewer", "http://unused")]
         self._security = [
             Agent("security-1", "security", "security-reviewer", "http://unused")
         ]
-        self._tests = [
-            Agent("tests-1", "test_gen", "tester", "http://unused")
-        ]
+        self._tests = [Agent("tests-1", "test_gen", "tester", "http://unused")]
         self._finalizers = [
             Agent("final-1", "finalizer", "coder-final", "http://unused")
         ]
@@ -181,7 +180,9 @@ async def test_pipeline_rejects_bad_synthesis_and_falls_back_to_re_reviewed_buil
     assert "eligible-candidate-fallback" in result["finalized_by"]
     assert result["release_gate"]["status"] == "ready"
     assert len(result["final_review_attempts"]) == 3
-    assert any("re-reviewed eligible builder" in warning for warning in result["warnings"])
+    assert any(
+        "re-reviewed eligible builder" in warning for warning in result["warnings"]
+    )
 
 
 @pytest.mark.asyncio
@@ -209,3 +210,36 @@ async def test_pipeline_blocks_when_no_builder_produces_a_valid_patch(
     assert result["release_gate"]["status"] == "blocked"
     assert result["patch"]["valid"] is False
     assert "no builder produced" in result["release_gate"]["reasons"][0]
+
+
+def test_reviewer_schema_is_valid_json() -> None:
+    """Reviewers are told to match a JSON Schema, so it must be JSON."""
+
+    schema = json.loads(prompts.REQUIRED_JSON_SCHEMA)
+
+    assert schema["additionalProperties"] is False
+    assert "correctness" in schema["properties"]
+
+
+def test_untrusted_notice_names_every_block_the_prompts_emit() -> None:
+    """A block missing from the notice is one the model is not told to distrust."""
+
+    builders = {
+        "critic": prompts.critic_user_prompt(_PROMPT_TASK, "patch", security=False),
+        "finalize": prompts.finalize_user_prompt(_PROMPT_TASK, "evidence"),
+        "repair": prompts.repair_user_prompt(_PROMPT_TASK, "patch", ["b"], ["e"]),
+        "test": prompts.test_user_prompt(_PROMPT_TASK, "patch"),
+    }
+    emitted = {
+        block
+        for text in builders.values()
+        for block in prompts.UNTRUSTED_BLOCKS
+        if block in text
+    }
+
+    assert emitted
+    for block in emitted:
+        assert block in prompts.UNTRUSTED_CONTEXT_NOTICE
+
+
+_PROMPT_TASK = {"task": "fix the parser", "mode": "fix", "language": "python"}

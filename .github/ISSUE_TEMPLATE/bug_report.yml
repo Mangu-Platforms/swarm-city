@@ -1,0 +1,64 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security vulnerabilities here. Follow
+        [SECURITY.md](https://github.com/Mangu-Platforms/swarm-city/blob/main/SECURITY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The command or request, and the smallest input that shows it.
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: release-gate
+    attributes:
+      label: Release gate output
+      description: >
+        For anything involving a task result, paste `result.release_gate` and
+        `result.warnings`. Redact repository content and task text you cannot
+        share.
+      render: json
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+    validations:
+      required: true
+
+  - type: dropdown
+    id: profile
+    attributes:
+      label: Profile
+      options: ["light", "balanced", "quality", "custom"]
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Relevant configuration
+      description: >
+        `ENABLE_GIT_APPLY`, `REPO_MOUNT_MODE`, `REQUIRE_TESTS`,
+        `TEST_RUNNER_COMMAND` (whether set, not its value), whether remote
+        synthesis is enabled, and how you are running it (Compose, k3s, direct).
+        Never paste secrets, tokens, or `.env` contents.
+      render: dotenv
+    validations:
+      required: true

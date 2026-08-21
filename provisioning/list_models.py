@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """List unique, environment-expanded model tags from an agent roster."""
+
 from __future__ import annotations
 
 import argparse

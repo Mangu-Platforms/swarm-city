@@ -35,11 +35,16 @@ if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://download.docker.com/linux/ubuntu/gpg |
     sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg --yes
   sudo chmod a+r /etc/apt/keyrings/docker.gpg
+  # shellcheck disable=SC1091  # /etc/os-release exists at run time, not lint time
   echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "${VERSION_CODENAME}") stable" |
     sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
   sudo apt-get update -y
   sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-  sudo usermod -aG docker "${USER}" || true
+  # ${USER} is not exported by sudo, cron, su -c, or a minimal container, and
+  # `|| true` does not rescue an unbound-variable expansion under `set -u` —
+  # the expansion fails before the command runs and aborts the installer with
+  # Docker installed but nothing else provisioned.
+  sudo usermod -aG docker "${USER:-$(id -un)}" || true
 else
   say "Docker is already installed"
   if ! python3 -c 'import yaml' >/dev/null 2>&1; then
@@ -57,6 +62,9 @@ else
 fi
 
 if [[ ! -f .env ]]; then
+  # Create the file private from the start. chmod after writing leaves the
+  # generated API token and Grafana password world-readable in the interval.
+  umask 077
   cp .env.example .env
   PROFILE="${PROFILE}" python3 - <<'PY'
 from pathlib import Path
@@ -103,7 +111,10 @@ say "Validating configuration and model licenses"
 python3 provisioning/check_licenses.py
 
 say "Starting Ollama"
-"${DOCKER[@]}" compose up -d ollama
+# --wait blocks until the healthcheck passes. Without it, `compose up -d`
+# returns as soon as the container is created and the model pulls below race
+# the server's bind, failing the install on any cold start.
+"${DOCKER[@]}" compose up -d --wait ollama
 
 if [[ "${SKIP_MODELS}" == "false" ]]; then
   say "Pulling models for the ${AGENTS_PROFILE:-balanced} profile"

@@ -1,4 +1,5 @@
 """Async process boundary for bounded and cancellable git transactions."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,6 +7,7 @@ import json
 import os
 import signal
 import sys
+from pathlib import Path
 
 from .config import get_settings
 
@@ -47,6 +49,17 @@ async def run_git_transaction(
             "task_id": task_id,
         }
     ).encode("utf-8")
+    # Resolve the package parent explicitly. Relying on the orchestrator's
+    # ambient working directory to make `app` importable breaks the worker
+    # whenever the process is started from anywhere else.
+    package_parent = Path(__file__).resolve().parents[1]
+    environment = os.environ.copy()
+    existing_path = environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = (
+        f"{package_parent}{os.pathsep}{existing_path}"
+        if existing_path
+        else str(package_parent)
+    )
     process = await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
@@ -55,6 +68,8 @@ async def run_git_transaction(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,
+        cwd=str(package_parent),
+        env=environment,
     )
     try:
         stdout, stderr = await asyncio.wait_for(

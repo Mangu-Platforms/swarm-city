@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Read literal dotenv assignments without evaluating shell syntax."""
+
 from __future__ import annotations
 
 import argparse
@@ -35,8 +36,14 @@ def read_literal_env(path: str | Path) -> dict[str, str]:
             and normalized_value[0] in {"'", '"'}
         ):
             normalized_value = normalized_value[1:-1]
-        if "\x00" in normalized_value or "\n" in normalized_value or "\r" in normalized_value:
-            raise ValueError(f"dotenv value contains a control character on line {line_number}")
+        if (
+            "\x00" in normalized_value
+            or "\n" in normalized_value
+            or "\r" in normalized_value
+        ):
+            raise ValueError(
+                f"dotenv value contains a control character on line {line_number}"
+            )
         values[normalized_key] = normalized_value
     return values
 

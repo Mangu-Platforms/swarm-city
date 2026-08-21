@@ -20,17 +20,49 @@ if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   git diff --check
 fi
 
+# A gate that skips its checks and still reports success is worse than no gate.
+# Missing tooling is only tolerated when the operator says so explicitly, and
+# the summary then names what was not run.
+skipped=()
+
+require_tool() {
+  local tool="$1" install_hint="$2"
+  if [[ "${ALLOW_MISSING_TOOLS:-0}" == "1" ]]; then
+    echo "WARNING: ${tool} is unavailable; SKIPPING its checks (${install_hint})" >&2
+    skipped+=("${tool}")
+    return 1
+  fi
+  echo "ERROR: ${tool} is required by the release gate (${install_hint})." >&2
+  echo "       Re-run with ALLOW_MISSING_TOOLS=1 to skip it deliberately." >&2
+  exit 2
+}
+
 if command -v ruff >/dev/null 2>&1; then
   ruff check .
   ruff format --check .
 else
-  echo "NOTICE: Ruff is not installed locally; CI installs pinned Ruff and enforces lint/format." >&2
+  require_tool ruff "pip install -r orchestrator/requirements-dev.txt" || true
 fi
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
-  docker compose config --quiet
+  # Placeholders, not credentials: the secrets are required at run time by
+  # design, and this step is checking the file's structure on a tree that has
+  # no .env.
+  GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-validation-placeholder}" \
+  SWARM_API_TOKEN="${SWARM_API_TOKEN:-validation-placeholder}" \
+    docker compose config --quiet
 else
-  echo "NOTICE: Docker Compose is unavailable; static Compose validation passed." >&2
+  require_tool "docker compose" "https://docs.docker.com/compose/install/" || true
 fi
 
-echo "release verification passed"
+if command -v shellcheck >/dev/null 2>&1; then
+  shellcheck install.sh provisioning/*.sh
+else
+  require_tool shellcheck "apt-get install shellcheck / brew install shellcheck" || true
+fi
+
+if (( ${#skipped[@]} )); then
+  echo "release verification passed WITH SKIPPED CHECKS: ${skipped[*]}"
+else
+  echo "release verification passed"
+fi

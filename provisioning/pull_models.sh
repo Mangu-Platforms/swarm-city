@@ -3,6 +3,8 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
+# shellcheck source=provisioning/portable.sh
+source "$(dirname "$0")/portable.sh"
 CONTAINER="${OLLAMA_CONTAINER:-swarm-ollama}"
 if [[ -n "${AGENTS_PROFILE:-}" ]]; then
   PROFILE="${AGENTS_PROFILE}"
@@ -32,7 +34,7 @@ fi
 if [[ -n "${MODELS:-}" ]]; then
   read -r -a model_list <<<"${MODELS}"
 else
-  mapfile -t model_list < <(python3 provisioning/list_models.py --config "${CONFIG}")
+  read_lines model_list < <(python3 provisioning/list_models.py --config "${CONFIG}")
 fi
 
 if [[ "${#model_list[@]}" -eq 0 ]]; then

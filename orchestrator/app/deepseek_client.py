@@ -1,4 +1,5 @@
 """DeepSeek V4 finalizer with retries and a cross-process token budget."""
+
 from __future__ import annotations
 
 import asyncio
@@ -29,6 +30,26 @@ class RemoteProtocolError(RuntimeError):
     """Raised when the remote finalizer returns an unusable response."""
 
 
+class BudgetLedgerError(RuntimeError):
+    """Raised when the token ledger cannot be read and spend cannot be bounded."""
+
+
+def _as_count(value: object) -> int:
+    """Coerce a persisted non-negative count, tolerating floats and junk."""
+
+    try:
+        return max(0, int(float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+
+
+def _as_seconds(value: object) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0.0
+
+
 class TokenBudget:
     """Track committed and in-flight monthly token use across processes."""
 
@@ -49,39 +70,48 @@ class TokenBudget:
         return datetime.now(timezone.utc).strftime("%Y-%m")
 
     def _load_unlocked(self) -> dict:
+        """Read the ledger, failing closed when it cannot be trusted.
+
+        Returning an empty ledger on a read error would silently reset the
+        month to zero and then persist that reset on the next write, turning a
+        transient I/O problem into an unbounded spend.
+        """
+
         if not self.path.exists():
             return {}
         try:
             raw = json.loads(self.path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            return {}
+        except (ValueError, OSError) as exc:
+            raise BudgetLedgerError(
+                f"token budget ledger at {self.path} is unreadable: {exc}"
+            ) from exc
         if not isinstance(raw, dict):
-            return {}
+            raise BudgetLedgerError(
+                f"token budget ledger at {self.path} is not a JSON object"
+            )
 
         normalized: dict[str, dict] = {}
         for month, value in raw.items():
             if isinstance(value, (int, float)):
                 normalized[str(month)] = {
-                    "used": max(0, int(value)),
+                    "used": _as_count(value),
                     "reservations": {},
                 }
                 continue
             if not isinstance(value, dict):
                 continue
-            used = value.get("used", 0)
             reservations = value.get("reservations", {})
             if not isinstance(reservations, dict):
                 reservations = {}
             normalized[str(month)] = {
-                "used": max(0, int(used)) if str(used).isdigit() else 0,
+                "used": _as_count(value.get("used", 0)),
                 "reservations": {
                     str(reservation_id): {
-                        "tokens": max(0, int(record.get("tokens", 0))),
-                        "created_at": float(record.get("created_at", 0)),
+                        "tokens": _as_count(record.get("tokens", 0)),
+                        "created_at": _as_seconds(record.get("created_at", 0)),
                     }
                     for reservation_id, record in reservations.items()
                     if isinstance(record, dict)
-                    and str(record.get("tokens", 0)).isdigit()
                 },
             }
         return normalized
@@ -112,7 +142,12 @@ class TokenBudget:
             reservations.pop(reservation_id, None)
 
     def reserve(self, estimated_tokens: int) -> str:
-        """Atomically reserve a worst-case request budget before network I/O."""
+        """Atomically reserve a worst-case request budget before network I/O.
+
+        The returned handle carries the month it was booked against, so a
+        request that straddles midnight UTC on the first settles against the
+        month it reserved from instead of orphaning tokens in the old month.
+        """
 
         estimated = max(1, int(estimated_tokens))
         reservation_id = uuid.uuid4().hex
@@ -137,26 +172,33 @@ class TokenBudget:
                 "created_at": time.time(),
             }
             self._write_unlocked(data)
-        return reservation_id
+        return f"{key}:{reservation_id}"
 
-    def settle(self, reservation_id: str, actual_tokens: int) -> None:
-        """Convert one reservation into committed usage."""
+    @staticmethod
+    def _split_handle(handle: str) -> tuple[str, str]:
+        key, separator, reservation_id = handle.partition(":")
+        if not separator:
+            return TokenBudget._month_key(), handle
+        return key, reservation_id
+
+    def settle(self, handle: str, actual_tokens: int) -> None:
+        """Convert one reservation into committed usage in its own month."""
 
         actual = max(0, int(actual_tokens))
+        key, reservation_id = self._split_handle(handle)
         with file_lock(self.lock_path, timeout_s=30):
             data = self._load_unlocked()
-            key = self._month_key()
             month = data.setdefault(key, {"used": 0, "reservations": {}})
             month.setdefault("reservations", {}).pop(reservation_id, None)
-            month["used"] = int(month.get("used", 0)) + actual
+            month["used"] = _as_count(month.get("used", 0)) + actual
             self._write_unlocked(data)
 
-    def release(self, reservation_id: str) -> None:
-        """Release an in-flight reservation after a failed request."""
+    def release(self, handle: str) -> None:
+        """Release an in-flight reservation that provably cost nothing."""
 
+        key, reservation_id = self._split_handle(handle)
         with file_lock(self.lock_path, timeout_s=30):
             data = self._load_unlocked()
-            key = self._month_key()
             month = data.setdefault(key, {"used": 0, "reservations": {}})
             month.setdefault("reservations", {}).pop(reservation_id, None)
             self._write_unlocked(data)
@@ -245,21 +287,13 @@ class DeepSeekClient:
         }
         url = f"{settings.deepseek_base_url.rstrip('/')}/chat/completions"
 
-        reservation_id = self.budget.reserve(request_estimate)
-        try:
-            response = await self._with_retries(url, headers, payload)
-        except BaseException:
-            self.budget.release(reservation_id)
-            raise
-
-        usage = response.get("usage", {})
-        spent = int(
-            usage.get("total_tokens")
-            or input_estimate + max(1, len(response["content"]) // 4)
+        response = await self._with_retries(
+            url,
+            headers,
+            payload,
+            request_estimate=request_estimate,
+            input_estimate=input_estimate,
         )
-        self.budget.settle(reservation_id, spent)
-        response["charged_tokens"] = spent
-        response["estimated_usage"] = not bool(usage.get("total_tokens"))
         return response
 
     async def _with_retries(
@@ -267,24 +301,56 @@ class DeepSeekClient:
         url: str,
         headers: dict,
         payload: dict,
+        *,
+        request_estimate: int,
+        input_estimate: int,
     ) -> dict:
+        """Attempt the request, reserving and settling budget per attempt.
+
+        Every attempt is a real generation the provider bills for, so one
+        reservation cannot cover the whole retry sequence: four attempts under
+        a single reservation can overshoot the monthly cap several times over.
+        A failed attempt settles at the input estimate rather than releasing to
+        zero, because the prompt was sent and charged even when no usable
+        response came back.
+        """
+
         last_error: Exception | None = None
         attempts = self.settings.deepseek_retries + 1
         for attempt in range(attempts):
+            handle = await asyncio.to_thread(self.budget.reserve, request_estimate)
             try:
-                return await self._stream_once(url, headers, payload)
+                response = await self._stream_once(url, headers, payload)
             except asyncio.CancelledError:
+                await asyncio.to_thread(self.budget.release, handle)
                 raise
             except httpx.HTTPStatusError as exc:
                 last_error = exc
                 status = exc.response.status_code
+                # The request reached the provider, so the prompt was charged.
+                await asyncio.to_thread(self.budget.settle, handle, input_estimate)
                 retryable = status in RETRYABLE_STATUS_CODES or status >= 500
                 if not retryable:
                     raise RuntimeError(
                         f"remote finalizer rejected request with HTTP {status}"
                     ) from exc
-            except (httpx.TransportError, RemoteProtocolError) as exc:
+            except httpx.TransportError as exc:
                 last_error = exc
+                # A transport failure may or may not have reached the provider.
+                await asyncio.to_thread(self.budget.release, handle)
+            except RemoteProtocolError as exc:
+                last_error = exc
+                await asyncio.to_thread(self.budget.settle, handle, input_estimate)
+            else:
+                usage = response.get("usage", {})
+                spent = int(
+                    usage.get("total_tokens")
+                    or input_estimate + max(1, len(response["content"]) // 4)
+                )
+                await asyncio.to_thread(self.budget.settle, handle, spent)
+                response["charged_tokens"] = spent
+                response["estimated_usage"] = not bool(usage.get("total_tokens"))
+                return response
 
             if attempt < attempts - 1:
                 delay = 2**attempt + random.uniform(0, 0.5)
@@ -330,12 +396,12 @@ class DeepSeekClient:
                         continue
                     try:
                         event = json.loads(data)
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as exc:
                         malformed_events += 1
                         if malformed_events > 3:
                             raise RemoteProtocolError(
                                 "remote finalizer returned malformed stream events"
-                            )
+                            ) from exc
                         continue
                     if not isinstance(event, dict):
                         continue
@@ -347,7 +413,9 @@ class DeepSeekClient:
                         if choice.get("finish_reason"):
                             finish_reason = str(choice["finish_reason"])
                         delta = choice.get("delta", {})
-                        content = delta.get("content") if isinstance(delta, dict) else None
+                        content = (
+                            delta.get("content") if isinstance(delta, dict) else None
+                        )
                         if isinstance(content, str):
                             output_chars += len(content)
                             if output_chars > self.settings.max_agent_output_chars:

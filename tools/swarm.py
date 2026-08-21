@@ -1,23 +1,42 @@
 #!/usr/bin/env python3
 """Host-side CLI for the LLM Swarm coding API."""
+
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
 
 
 _PROJECT_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+# C0 and C1 control characters other than tab and newline. Model output and
+# release-gate text are untrusted, and printing them raw lets a patch clear the
+# screen, rewrite the terminal title, or render a deceptive OSC-8 hyperlink.
+_CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
 class ApiError(RuntimeError):
     """HTTP or protocol error returned by the swarm API."""
+
+
+def _sanitize(text: str) -> str:
+    return _CONTROL_CHARACTERS.sub("", text)
+
+
+def _echo(text: str, *, stream=None) -> None:
+    """Print server-supplied text, stripping escape sequences for a terminal."""
+
+    target = stream or sys.stdout
+    print(_sanitize(text) if target.isatty() else text, file=target)
 
 
 def _dotenv_value(name: str, path: Path | None = None) -> str | None:
@@ -58,12 +77,26 @@ def _environment_default(name: str, fallback: str = "") -> str:
     return fallback if from_file is None else from_file
 
 
+class _NoRedirects(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects so the bearer token is never re-sent to another host.
+
+    urllib follows 3xx by default and replays every original header, including
+    Authorization, at whatever Location names. A misconfigured --url or a
+    plaintext hop is enough to hand the API token to a third party.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        del req, fp, msg, headers
+        raise ApiError(f"server returned an unexpected redirect ({code}) to {newurl}")
+
+
 class SwarmClient:
     """Small standard-library client for local and remote orchestrators."""
 
     def __init__(self, base_url: str, token: str = "") -> None:
         self.base_url = base_url.rstrip("/")
         self.token = token
+        self._opener = urllib.request.build_opener(_NoRedirects)
 
     def request(
         self,
@@ -87,17 +120,38 @@ class SwarmClient:
             method=method,
         )
         try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                raw = response.read().decode("utf-8")
+            with self._opener.open(request, timeout=30) as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1).decode(
+                    "utf-8",
+                    errors="replace",
+                )
         except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise ApiError(f"HTTP {exc.code}: {detail}") from exc
+            detail = exc.read(8192).decode("utf-8", errors="replace")
+            raise ApiError(f"HTTP {exc.code}: {_sanitize(detail)}") from exc
         except urllib.error.URLError as exc:
             raise ApiError(f"cannot reach {self.base_url}: {exc.reason}") from exc
+        if len(raw.encode("utf-8", errors="replace")) > MAX_RESPONSE_BYTES:
+            raise ApiError("server response exceeded the client size limit")
         try:
             return json.loads(raw) if raw else None
         except json.JSONDecodeError as exc:
             raise ApiError("server returned invalid JSON") from exc
+
+    def request_object(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, Any] | None = None,
+        extra_headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Request a response the caller may index into without guarding."""
+
+        value = self.request(method, path, payload, extra_headers)
+        if not isinstance(value, dict):
+            raise ApiError(
+                f"server returned {type(value).__name__}, expected an object"
+            )
+        return value
 
 
 def _client(args: argparse.Namespace) -> SwarmClient:
@@ -120,10 +174,10 @@ def _wait_for_task(client: SwarmClient, task_id: str, timeout: int) -> dict:
     started = time.monotonic()
     previous_phase = ""
     while True:
-        state = client.request("GET", f"/tasks/{task_id}")
-        phase = state.get("phase", "")
+        state = client.request_object("GET", _task_path(task_id))
+        phase = str(state.get("phase", ""))
         if phase != previous_phase:
-            print(f"[{state.get('status')}] {phase}", file=sys.stderr, flush=True)
+            _echo(f"[{state.get('status')}] {phase}", stream=sys.stderr)
             previous_phase = phase
         if state.get("status") in {"done", "error", "cancelled"}:
             return state
@@ -147,35 +201,40 @@ def command_task(args: argparse.Namespace) -> int:
         "allow_high_risk_paths": args.approve_high_risk,
     }
     headers = (
-        {"Idempotency-Key": args.idempotency_key}
-        if args.idempotency_key
-        else None
+        {"Idempotency-Key": args.idempotency_key} if args.idempotency_key else None
     )
-    submitted = client.request("POST", "/tasks", payload, extra_headers=headers)
-    task_id = submitted["task_id"]
+    submitted = client.request_object("POST", "/tasks", payload, extra_headers=headers)
+    task_id = submitted.get("task_id")
+    if not isinstance(task_id, str) or not task_id:
+        raise ApiError("server accepted the task but returned no task_id")
     if args.no_wait:
         _print_json(submitted)
         return 0
 
-    state = _wait_for_task(client, task_id, args.timeout)
+    return _render_result(args, _wait_for_task(client, task_id, args.timeout))
+
+
+def _render_result(args: argparse.Namespace, state: dict[str, Any]) -> int:
+    """Report a finished task and map its outcome to an exit code."""
+
     if args.json:
         _print_json(state)
     else:
-        result = state.get("result", {})
+        result = state.get("result") or {}
         final = result.get("final")
         if final:
-            print(final)
+            _echo(final)
         else:
             _print_json(state)
-        gate = result.get("release_gate", {})
+        gate = result.get("release_gate") or {}
         if gate:
             print(
                 f"release_gate={gate.get('status')} score={gate.get('score')}",
                 file=sys.stderr,
             )
             for reason in gate.get("reasons", []):
-                print(f"  - {reason}", file=sys.stderr)
-        git_result = result.get("git")
+                _echo(f"  - {reason}", stream=sys.stderr)
+        git_result = result.get("git") or {}
         if git_result:
             print(
                 f"git_applied={git_result.get('applied')} "
@@ -184,36 +243,51 @@ def command_task(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
 
+    result = state.get("result") or {}
     if args.output:
-        final = state.get("result", {}).get("final", "")
-        Path(args.output).write_text(final, encoding="utf-8")
+        final = result.get("final")
+        # Only write a real patch. Truncating the destination when the task
+        # failed destroys whatever the caller already had there.
+        if state.get("status") == "done" and isinstance(final, str) and final:
+            destination = Path(args.output)
+            temporary = destination.with_name(f"{destination.name}.{os.getpid()}.tmp")
+            temporary.write_text(final, encoding="utf-8")
+            temporary.replace(destination)
+        else:
+            print(
+                f"no patch to write; {args.output} was left unchanged",
+                file=sys.stderr,
+            )
 
     if state.get("status") != "done":
         return 1
-    result = state.get("result", {})
-    gate_status = result.get("release_gate", {}).get("status")
+    gate_status = (result.get("release_gate") or {}).get("status")
     if gate_status not in {None, "ready"}:
         return 3
-    if args.apply and not result.get("git", {}).get("applied"):
+    if args.apply and not (result.get("git") or {}).get("applied"):
         return 4
     return 0
 
 
+def _task_path(task_id: str) -> str:
+    return f"/tasks/{urllib.parse.quote(task_id, safe='')}"
+
+
 def command_status(args: argparse.Namespace) -> int:
-    _print_json(_client(args).request("GET", f"/tasks/{args.task_id}"))
+    _print_json(_client(args).request("GET", _task_path(args.task_id)))
     return 0
 
 
 def command_list(args: argparse.Namespace) -> int:
-    path = f"/tasks?limit={args.limit}"
+    query = {"limit": args.limit}
     if args.status:
-        path += f"&status={args.status}"
-    _print_json(_client(args).request("GET", path))
+        query["status"] = args.status
+    _print_json(_client(args).request("GET", f"/tasks?{urllib.parse.urlencode(query)}"))
     return 0
 
 
 def command_cancel(args: argparse.Namespace) -> int:
-    _print_json(_client(args).request("DELETE", f"/tasks/{args.task_id}"))
+    _print_json(_client(args).request("DELETE", _task_path(args.task_id)))
     return 0
 
 
@@ -339,6 +413,10 @@ def main() -> int:
     except KeyboardInterrupt:
         print("cancelled", file=sys.stderr)
         return 130
+    except Exception as exc:  # noqa: BLE001 - a client bug must not look like a
+        # failed task, so it gets its own exit code rather than colliding with 1.
+        print(f"internal client error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 5
 
 
 if __name__ == "__main__":

@@ -24,7 +24,7 @@ agents:
 
   - role: test_gen
     model: ${SWARM_CODER_MODEL:-qwen2.5-coder:7b}
-    count: 1
+    count: ${SWARM_TEST_AGENTS:-1}
     temperature: 0.15
 
   - role: finalizer

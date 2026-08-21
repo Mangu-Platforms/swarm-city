@@ -1,10 +1,12 @@
 """Repository-aware, review-gated multi-agent coding pipeline."""
+
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import logging
 import random
+import re
 import time
 from collections import defaultdict
 from contextlib import contextmanager
@@ -54,9 +56,7 @@ class Pipeline:
             self.settings.repo_root,
             self.settings,
         )
-        self._agent_slots = asyncio.Semaphore(
-            self.settings.max_concurrent_agent_calls
-        )
+        self._agent_slots = asyncio.Semaphore(self.settings.max_concurrent_agent_calls)
 
     async def run(self, task: dict, progress: dict) -> dict:
         """Run one coding task under an unconditional wall-clock deadline."""
@@ -89,9 +89,11 @@ class Pipeline:
                 context_paths=task.get("context_paths", []),
                 auto_context=task.get("auto_context"),
             )
-        expected_head = task.get("expected_head")
-        if expected_head and bundle.git_commit and not bundle.git_commit.startswith(
+        expected_head = _normalize_expected_head(task.get("expected_head"))
+        if (
             expected_head
+            and bundle.git_commit
+            and not bundle.git_commit.lower().startswith(expected_head)
         ):
             raise RuntimeError(
                 f"stale repository base: expected {expected_head}, "
@@ -218,16 +220,11 @@ class Pipeline:
                     result["git"] = await run_git_transaction(
                         final_output,
                         task["task"],
-                        expected_head=task.get("expected_head")
-                        or bundle.git_commit,
-                        allow_high_risk_paths=bool(
-                            task.get("allow_high_risk_paths")
-                        ),
+                        expected_head=expected_head or bundle.git_commit,
+                        allow_high_risk_paths=bool(task.get("allow_high_risk_paths")),
                         task_id=task.get("task_id"),
                     )
-                git_outcome = (
-                    "success" if result["git"].get("applied") else "failure"
-                )
+                git_outcome = "success" if result["git"].get("applied") else "failure"
                 GIT_TRANSACTIONS.labels(outcome=git_outcome).inc()
                 if git_outcome == "failure":
                     result["release_gate"]["status"] = "blocked"
@@ -287,9 +284,7 @@ class Pipeline:
             diff = extract_diff(output)
             validation = self._validate_diff(diff)
             fingerprint_text = diff or output.strip()
-            fingerprint = hashlib.sha256(
-                fingerprint_text.encode("utf-8")
-            ).hexdigest()
+            fingerprint = hashlib.sha256(fingerprint_text.encode("utf-8")).hexdigest()
             if fingerprint in fingerprints:
                 duplicates += 1
                 continue
@@ -311,9 +306,7 @@ class Pipeline:
         result["drafts"] = {
             "requested": len(selected),
             "completed": len(drafts),
-            "valid_patches": sum(
-                draft["patch_validation"].valid for draft in drafts
-            ),
+            "valid_patches": sum(draft["patch_validation"].valid for draft in drafts),
             "duplicates_removed": duplicates,
             "failed_calls": failures,
             "candidates": [
@@ -486,15 +479,19 @@ class Pipeline:
                     )
 
             accepted: list[str] = []
+            pruned = 0
             for part in parts:
                 candidate = "\n\n".join([*accepted, part])
                 prompt = prompts.finalize_user_prompt(task, candidate)
                 if len(prompt) > self.settings.max_agent_input_chars:
-                    result["warnings"].append(
-                        "synthesis evidence was pruned to fit MAX_AGENT_INPUT_CHARS"
-                    )
+                    pruned += 1
                     continue
                 accepted.append(part)
+            if pruned:
+                result["warnings"].append(
+                    f"{pruned} synthesis evidence block(s) were pruned to fit "
+                    "MAX_AGENT_INPUT_CHARS"
+                )
             result["synthesis_evidence_blocks"] = len(accepted)
             return "\n\n".join(accepted)
 
@@ -731,9 +728,7 @@ class Pipeline:
                 {
                     "role": "system",
                     "content": reviewer.system_prompt
-                    or (
-                        prompts.SECURITY_SYSTEM if security else prompts.CRITIC_SYSTEM
-                    ),
+                    or (prompts.SECURITY_SYSTEM if security else prompts.CRITIC_SYSTEM),
                 },
                 {
                     "role": "user",
@@ -761,8 +756,8 @@ class Pipeline:
         *,
         phase_suffix: str,
     ) -> tuple[str, str]:
-        should_use_remote = (
-            not self.settings.skip_finalize and bool(self.settings.deepseek_api_key)
+        should_use_remote = not self.settings.skip_finalize and bool(
+            self.settings.deepseek_api_key
         )
         if should_use_remote:
             self._set_phase(progress, f"{phase_suffix}_remote")
@@ -771,13 +766,13 @@ class Pipeline:
                     final = await self.deepseek.finalize(system_prompt, user_prompt)
                 usage = final.get("usage", {})
                 spent = int(
-                    usage.get("total_tokens")
-                    or final.get("charged_tokens")
-                    or 0
+                    usage.get("total_tokens") or final.get("charged_tokens") or 0
                 )
                 if spent:
                     DEEPSEEK_TOKENS.inc(spent)
-                DEEPSEEK_BUDGET_USED.set(self.deepseek.budget.used())
+                DEEPSEEK_BUDGET_USED.set(
+                    await asyncio.to_thread(self.deepseek.budget.used)
+                )
                 result.setdefault("remote_calls", []).append(
                     {
                         "phase": phase_suffix,
@@ -906,20 +901,12 @@ class Pipeline:
     def _quality_critics(self) -> list[Agent]:
         if hasattr(self.registry, "quality_critics"):
             return list(self.registry.quality_critics())
-        return [
-            agent
-            for agent in self.registry.critics()
-            if agent.role != "security"
-        ]
+        return [agent for agent in self.registry.critics() if agent.role != "security"]
 
     def _security_critics(self) -> list[Agent]:
         if hasattr(self.registry, "security_critics"):
             return list(self.registry.security_critics())
-        return [
-            agent
-            for agent in self.registry.critics()
-            if agent.role == "security"
-        ]
+        return [agent for agent in self.registry.critics() if agent.role == "security"]
 
     @staticmethod
     def _select_diverse(
@@ -982,6 +969,23 @@ class Pipeline:
 
 def _enum_value(value: object) -> str:
     return str(getattr(value, "value", value))
+
+
+def _normalize_expected_head(value: object) -> str | None:
+    """Normalize a caller-supplied stale-base guard, rejecting junk outright.
+
+    The API layer already enforces this shape. Repeating it here keeps direct
+    pipeline callers from silently disabling the guard with a malformed value.
+    """
+
+    if not value:
+        return None
+    normalized = str(value).strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{7,64}", normalized):
+        raise RuntimeError(
+            "expected_head must be a 7-64 character hexadecimal commit id"
+        )
+    return normalized
 
 
 def _score_payload(score: DraftScore) -> dict:

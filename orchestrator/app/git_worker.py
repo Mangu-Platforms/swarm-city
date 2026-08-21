@@ -1,4 +1,5 @@
 """Subprocess entrypoint for cancellable git transactions."""
+
 from __future__ import annotations
 
 import json
