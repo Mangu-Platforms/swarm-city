@@ -1,3 +1,10 @@
+[project]
+name = "swarm-city"
+version = "0.1.0"
+description = "LLM swarm coding orchestrator with a Vercel serverless health surface"
+requires-python = ">=3.11"
+dependencies = []
+
 [tool.pytest.ini_options]
 testpaths = ["orchestrator/tests"]
 pythonpath = ["orchestrator"]
@@ -18,3 +25,6 @@ ignore = ["B008", "E501"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.vercel]
+entrypoint = "api.health:handler"
