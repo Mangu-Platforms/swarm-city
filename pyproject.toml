@@ -18,3 +18,6 @@ ignore = ["B008", "E501"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
+
+[tool.vercel]
+entrypoint = "api.health:handler"
